@@ -18,7 +18,10 @@ func serveHTTP(server *mcp.Server, addr, token string) error {
 
 	handler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },
-		nil,
+		// Disable the SDK's DNS-rebinding protection: behind a reverse proxy the
+		// connection is loopback but the Host header is the public name, which the
+		// protection rejects. Auth here is the bearer token, not the Host header.
+		&mcp.StreamableHTTPOptions{DisableLocalhostProtection: true},
 	)
 
 	log.Printf("kbmcp: listening on %s (bearer-token auth)", addr)
