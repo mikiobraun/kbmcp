@@ -54,6 +54,16 @@ func main() {
 		Description: "Read a whole text file from the served folder (truncated if very large).",
 	}, ReadFile)
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "write_file",
+		Description: "Create or overwrite a text file with the given content. Parent folders are created as needed. Pass dry_run to preview the diff without writing.",
+	}, WriteFile)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "edit_file",
+		Description: "Replace an exact string in a text file. old_string must occur exactly once unless replace_all is set. Pass dry_run to preview the diff without writing.",
+	}, EditFile)
+
 	if *httpAddr != "" {
 		if err := serveHTTP(server, *httpAddr, *token); err != nil {
 			log.Fatalf("kbmcp: %v", err)

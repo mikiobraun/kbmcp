@@ -13,9 +13,17 @@ targeted reads. Built on the official
 | `search` | `query`, `path` (optional scope), `max_results` (optional, default 100) | Case-insensitive substring search across text files. Returns `file:line: text`. |
 | `read_lines` | `path`, `start` (default 1), `end` (default EOF) | Read a 1-based inclusive line range, line-numbered. |
 | `read_file` | `path` | Read a whole text file (truncated at 1 MiB). |
+| `write_file` | `path`, `content`, `dry_run` (optional) | Create or overwrite a file; parent folders are created. Returns a diff. |
+| `edit_file` | `path`, `old_string`, `new_string`, `replace_all` (optional), `dry_run` (optional) | Replace exact text; `old_string` must be unique unless `replace_all`. Returns a diff. |
 
 All paths are relative to the served folder. Requests that escape the folder
 (`../`), absolute paths, and binary files are refused.
+
+Both write tools return a unified-style diff of the change, and accept
+`dry_run: true` to preview that diff without writing anything. Note that the
+approval/confirmation prompt for a write is shown by the **client** (e.g. Claude
+Desktop's "allow tool" dialog), not by this server — MCP has no server-rendered
+diff-approval UI.
 
 ## Build
 

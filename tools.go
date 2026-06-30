@@ -298,3 +298,128 @@ func ReadFile(ctx context.Context, req *mcp.CallToolRequest, in ReadFileInput) (
 	}
 	return textResult("%s", text), out, nil
 }
+
+// ---- write_file ----
+
+type WriteFileInput struct {
+	Path    string `json:"path" jsonschema:"file to write, relative to root; parent folders are created as needed"`
+	Content string `json:"content" jsonschema:"full new contents of the file"`
+	DryRun  bool   `json:"dry_run,omitempty" jsonschema:"if true, return the diff without writing anything"`
+}
+
+type WriteFileOutput struct {
+	Path    string `json:"path"`
+	Created bool   `json:"created"`
+	Bytes   int    `json:"bytes"`
+	DryRun  bool   `json:"dry_run"`
+	Diff    string `json:"diff"`
+}
+
+func WriteFile(ctx context.Context, req *mcp.CallToolRequest, in WriteFileInput) (*mcp.CallToolResult, WriteFileOutput, error) {
+	path, err := resolve(in.Path)
+	if err != nil {
+		return nil, WriteFileOutput{}, err
+	}
+
+	var old string
+	created := true
+	if info, statErr := os.Stat(path); statErr == nil {
+		if info.IsDir() {
+			return nil, WriteFileOutput{}, fmt.Errorf("%s is a directory", in.Path)
+		}
+		created = false
+		if data, rdErr := os.ReadFile(path); rdErr == nil && !looksBinary(data[:min(len(data), 512)]) {
+			old = string(data)
+		}
+	}
+
+	diff := diffText(old, in.Content, 3)
+
+	out := WriteFileOutput{Path: relPath(path), Created: created, Bytes: len(in.Content), DryRun: in.DryRun, Diff: diff}
+	if in.DryRun {
+		return textResult("dry run, no changes written.\n--- diff ---\n%s", diff), out, nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, WriteFileOutput{}, err
+	}
+	if err := os.WriteFile(path, []byte(in.Content), 0o644); err != nil {
+		return nil, WriteFileOutput{}, err
+	}
+
+	verb := "updated"
+	if created {
+		verb = "created"
+	}
+	return textResult("%s %s (%d bytes).\n--- diff ---\n%s", verb, relPath(path), len(in.Content), diff), out, nil
+}
+
+// ---- edit_file ----
+
+type EditFileInput struct {
+	Path       string `json:"path" jsonschema:"file to edit, relative to root"`
+	OldString  string `json:"old_string" jsonschema:"exact text to replace; must occur exactly once unless replace_all is set"`
+	NewString  string `json:"new_string" jsonschema:"text to replace it with"`
+	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"replace every occurrence instead of requiring a unique match"`
+	DryRun     bool   `json:"dry_run,omitempty" jsonschema:"if true, return the diff without writing anything"`
+}
+
+type EditFileOutput struct {
+	Path         string `json:"path"`
+	Replacements int    `json:"replacements"`
+	DryRun       bool   `json:"dry_run"`
+	Diff         string `json:"diff"`
+}
+
+func EditFile(ctx context.Context, req *mcp.CallToolRequest, in EditFileInput) (*mcp.CallToolResult, EditFileOutput, error) {
+	if in.OldString == "" {
+		return nil, EditFileOutput{}, fmt.Errorf("old_string must not be empty")
+	}
+	if in.OldString == in.NewString {
+		return nil, EditFileOutput{}, fmt.Errorf("old_string and new_string are identical")
+	}
+	path, err := resolve(in.Path)
+	if err != nil {
+		return nil, EditFileOutput{}, err
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, EditFileOutput{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, EditFileOutput{}, err
+	}
+	if looksBinary(data[:min(len(data), 512)]) {
+		return nil, EditFileOutput{}, fmt.Errorf("%s appears to be a binary file", in.Path)
+	}
+
+	old := string(data)
+	count := strings.Count(old, in.OldString)
+	switch {
+	case count == 0:
+		return nil, EditFileOutput{}, fmt.Errorf("old_string not found in %s", in.Path)
+	case count > 1 && !in.ReplaceAll:
+		return nil, EditFileOutput{}, fmt.Errorf("old_string occurs %d times in %s; add surrounding context to make it unique, or set replace_all", count, in.Path)
+	}
+
+	var updated string
+	if in.ReplaceAll {
+		updated = strings.ReplaceAll(old, in.OldString, in.NewString)
+	} else {
+		updated = strings.Replace(old, in.OldString, in.NewString, 1)
+		count = 1
+	}
+
+	diff := diffText(old, updated, 3)
+	out := EditFileOutput{Path: relPath(path), Replacements: count, DryRun: in.DryRun, Diff: diff}
+	if in.DryRun {
+		return textResult("dry run, no changes written.\n--- diff ---\n%s", diff), out, nil
+	}
+
+	if err := os.WriteFile(path, []byte(updated), info.Mode().Perm()); err != nil {
+		return nil, EditFileOutput{}, err
+	}
+	return textResult("edited %s (%d replacement(s)).\n--- diff ---\n%s", relPath(path), count, diff), out, nil
+}
