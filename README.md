@@ -60,6 +60,21 @@ unencrypted on the wire. Only expose this on a trusted network — a home LAN or
 put it behind a TLS-terminating reverse proxy (Caddy/nginx) rather than exposing
 the port directly.
 
+## Logs
+
+The server logs every request to stderr: each tool call with its name, a
+(truncated) summary of its arguments, whether it succeeded or `FAILED` (with the
+error message), and how long it took. Other methods (`initialize`, `tools/list`)
+are logged briefly.
+
+```
+tool search {"query":"alpha"} -> ok (2ms)
+tool edit_file {"path":"notes.md","old_string":"foo",...} -> FAILED: old_string not found in notes.md (1ms)
+```
+
+Watch them live by running the server in a terminal, or — once it runs under
+systemd — with `journalctl -fu kbmcp`.
+
 ## Wire it into a client
 
 Claude Code:

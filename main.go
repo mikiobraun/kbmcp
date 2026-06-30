@@ -33,6 +33,7 @@ func main() {
 	log.Printf("kbmcp: serving %s", root)
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "kbmcp", Version: "0.1.0"}, nil)
+	server.AddReceivingMiddleware(loggingMiddleware)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_files",
