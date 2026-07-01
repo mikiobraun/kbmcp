@@ -20,7 +20,9 @@ All paths are relative to the served folder. Requests that escape the folder
 (`../`), absolute paths, and binary files are refused.
 
 Both write tools return a unified-style diff of the change, and accept
-`dry_run: true` to preview that diff without writing anything. Note that the
+`dry_run: true` to preview that diff without writing anything. For very large
+files the diff is skipped (a summary line is returned instead) to avoid the
+O(N×M) cost of the line-diff — similar to how GitHub hides diffs for huge files. Note that the
 approval/confirmation prompt for a write is shown by the **client** (e.g. Claude
 Desktop's "allow tool" dialog), not by this server — MCP has no server-rendered
 diff-approval UI.

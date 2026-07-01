@@ -5,12 +5,23 @@ import (
 	"strings"
 )
 
+// maxDiffCells caps the size of the LCS table (N*M). Above this, computing the
+// diff would use too much time/memory (the table is 8 bytes per cell), so we
+// skip it and return a summary instead. ~5M cells is ~40 MB and sub-second.
+const maxDiffCells = 5_000_000
+
 // diffText returns a compact unified-style diff between old and new, with up to
 // `ctx` lines of context around each change. Returns "" when they are equal.
-// Line-based LCS; fine for the modestly sized text files this server serves.
+// Line-based LCS; for large inputs the diff is skipped (see maxDiffCells) to
+// avoid the O(N*M) blow-up, and a summary line is returned instead.
 func diffText(old, new string, ctx int) string {
 	a := splitLines(old)
 	b := splitLines(new)
+
+	// Guard against the O(N*M) LCS table exploding for large files.
+	if len(a)*len(b) > maxDiffCells {
+		return fmt.Sprintf("(diff omitted: file too large for inline diff — %d line(s) -> %d line(s))\n", len(a), len(b))
+	}
 
 	// LCS length table.
 	n, m := len(a), len(b)
