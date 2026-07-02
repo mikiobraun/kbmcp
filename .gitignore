@@ -1,4 +1,5 @@
 /kbmcp
 /kbmcp.test
+/kbmcp.log
 /vault/
 .env

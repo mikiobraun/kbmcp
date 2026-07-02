@@ -65,6 +65,21 @@ func main() {
 		Description: "Replace an exact string in a text file. old_string must occur exactly once unless replace_all is set. Pass dry_run to preview the diff without writing.",
 	}, EditFile)
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "backlinks",
+		Description: "List notes that link to the given note via [[wiki links]], with the source line of each link.",
+	}, Backlinks)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "outgoing_links",
+		Description: "List the [[wiki links]] in the given note, showing which resolve to a note and which are broken.",
+	}, OutgoingLinks)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "orphans",
+		Description: "List notes that nothing else links to (no backlinks).",
+	}, Orphans)
+
 	if *httpAddr != "" {
 		if err := serveHTTP(server, *httpAddr, *token); err != nil {
 			log.Fatalf("kbmcp: %v", err)

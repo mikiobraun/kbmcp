@@ -15,9 +15,17 @@ targeted reads. Built on the official
 | `read_file` | `path` | Read a whole text file (truncated at 1 MiB). |
 | `write_file` | `path`, `content`, `dry_run` (optional) | Create or overwrite a file; parent folders are created. Returns a diff. |
 | `edit_file` | `path`, `old_string`, `new_string`, `replace_all` (optional), `dry_run` (optional) | Replace exact text; `old_string` must be unique unless `replace_all`. Returns a diff. |
+| `backlinks` | `path` | Notes that link to this note via `[[wiki links]]`, with the source line of each. |
+| `outgoing_links` | `path` | The `[[wiki links]]` in this note, showing which resolve and which are broken. |
+| `orphans` | — | Notes that nothing else links to (no backlinks). |
 
 All paths are relative to the served folder. Requests that escape the folder
 (`../`), absolute paths, and binary files are refused.
+
+Wiki-links use Obsidian-style resolution: `[[note-name]]` matches the file named
+`note-name.md` anywhere in the vault (by basename, case-insensitive); an
+`|alias` or `#heading` suffix is ignored, and `[[...]]` inside code spans or
+fenced code blocks is not treated as a link.
 
 Both write tools return a unified-style diff of the change, and accept
 `dry_run: true` to preview that diff without writing anything. For very large
