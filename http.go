@@ -23,22 +23,27 @@ func serveHTTP(server *mcp.Server, addr, token string) error {
 		return fmt.Errorf("invalid -http address %q: %w", addr, err)
 	}
 
-	handler := mcp.NewStreamableHTTPHandler(
+	mcpHandler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },
 		// Behind a reverse proxy the connection is loopback but the Host header
 		// is the public name; disable the SDK's DNS-rebinding protection.
 		&mcp.StreamableHTTPOptions{DisableLocalhostProtection: true},
 	)
 
+	// MCP at the root, REST alongside it — one binary, two protocols.
+	mux := http.NewServeMux()
+	mux.Handle("/", mcpHandler)
+	mux.HandleFunc("GET /files/", restGet)
+
 	if token == "" {
 		bind := "127.0.0.1:" + port
 		log.Printf("kbmcp: listening on %s (no token; trusting forward-auth gateway)", bind)
-		return http.ListenAndServe(bind, logIdentity(handler))
+		return http.ListenAndServe(bind, logIdentity(mux))
 	}
 
 	bind := "0.0.0.0:" + port
 	log.Printf("kbmcp: listening on %s (bearer-token auth)", bind)
-	return http.ListenAndServe(bind, requireToken(token, logIdentity(handler)))
+	return http.ListenAndServe(bind, requireToken(token, logIdentity(mux)))
 }
 
 // logIdentity logs the caller identity injected by the auth gateway, when present.
