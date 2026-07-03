@@ -4,28 +4,51 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// serveHTTP runs the MCP server over Streamable HTTP on addr, requiring every
-// request to present "Authorization: Bearer <token>".
+// serveHTTP runs the MCP server over Streamable HTTP. The token decides the
+// security model:
+//
+//   - token set   → bind 0.0.0.0 and require "Authorization: Bearer <token>".
+//   - no token    → bind 127.0.0.1 only, and trust an auth gateway (Caddy
+//     forward_auth) in front of us. Since only localhost can connect, the
+//     X-Volume-User header Caddy injects can be trusted.
 func serveHTTP(server *mcp.Server, addr, token string) error {
-	if token == "" {
-		return fmt.Errorf("HTTP mode requires a token (set -token or KBMCP_TOKEN)")
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("invalid -http address %q: %w", addr, err)
 	}
 
 	handler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },
-		// Disable the SDK's DNS-rebinding protection: behind a reverse proxy the
-		// connection is loopback but the Host header is the public name, which the
-		// protection rejects. Auth here is the bearer token, not the Host header.
+		// Behind a reverse proxy the connection is loopback but the Host header
+		// is the public name; disable the SDK's DNS-rebinding protection.
 		&mcp.StreamableHTTPOptions{DisableLocalhostProtection: true},
 	)
 
-	log.Printf("kbmcp: listening on %s (bearer-token auth)", addr)
-	return http.ListenAndServe(addr, requireToken(token, handler))
+	if token == "" {
+		bind := "127.0.0.1:" + port
+		log.Printf("kbmcp: listening on %s (no token; trusting forward-auth gateway)", bind)
+		return http.ListenAndServe(bind, logIdentity(handler))
+	}
+
+	bind := "0.0.0.0:" + port
+	log.Printf("kbmcp: listening on %s (bearer-token auth)", bind)
+	return http.ListenAndServe(bind, requireToken(token, logIdentity(handler)))
+}
+
+// logIdentity logs the caller identity injected by the auth gateway, when present.
+func logIdentity(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user := r.Header.Get("X-Volume-User"); user != "" {
+			log.Printf("kbmcp: request from user=%q scopes=%q", user, r.Header.Get("X-Volume-Scopes"))
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // requireToken wraps next, rejecting any request without the exact bearer token.
