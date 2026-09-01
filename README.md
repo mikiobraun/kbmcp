@@ -1,9 +1,9 @@
 # kbmcp
 
 A small [MCP](https://modelcontextprotocol.io) server (stdio) written in Go that
-exposes a single folder on your filesystem for browsing, substring search,
-targeted reads, and **git-backed edits**: every write is committed, and agents
-can explore the resulting history. Built on the official
+exposes a single folder on your filesystem for browsing, full-text and filename
+search, targeted reads, and **git-backed edits**: every write is committed, and
+agents can explore the resulting history. Built on the official
 [`go-sdk`](https://github.com/modelcontextprotocol/go-sdk).
 
 The served folder **must be a git repository** — the server refuses to start
@@ -14,8 +14,9 @@ in it so commits succeed.
 
 | Tool | Arguments | Description |
 |------|-----------|-------------|
-| `list_files` | `path` (optional), `recursive` (optional) | List entries under the served folder. |
-| `search` | `query`, `path` (optional scope), `max_results` (optional, default 100) | Case-insensitive substring search across text files. Returns `file:line: text`. |
+| `list_files` | `path`, `recursive`, `sort` (`path`\|`modified`), `sort_reverse`, `max_results` (default 200), `from` — all optional | List entries under the served folder, sorted and paginated. `sort: modified` + `sort_reverse: true` gives newest first. |
+| `search` | `query`, `path` (scope), `glob`, `fixed_strings`, `case_sensitive`, `max_results` (default 100) | Full-text content search via ripgrep. `query` is a regex unless `fixed_strings`; smart-case unless `case_sensitive`; `glob` restricts by filename. Returns `file:line: text`. |
+| `find_files` | `pattern`, `glob`, `type` (`file`\|`dir`), `path` (scope), `max_results` (default 200), `from` — all optional | Find files/directories by name via fd. `pattern` is a regex unless `glob`. Returns a sorted, paginated path list. |
 | `read_lines` | `path`, `start` (default 1), `end` (default EOF) | Read a 1-based inclusive line range, line-numbered. |
 | `read_file` | `path` | Read a whole text file (truncated at 1 MiB). |
 | `write_file` | `path`, `content`, `message`, `author_name`/`author_email` (optional), `dry_run` (optional) | Create or overwrite a file, then commit it. Parent folders are created. Returns a diff. |
@@ -29,7 +30,10 @@ in it so commits succeed.
 | `orphans` | — | Notes that nothing else links to (no backlinks). |
 
 All paths are relative to the served folder. Requests that escape the folder
-(`../`), absolute paths, and binary files are refused.
+(`../`), absolute paths, and binary files are refused. Hidden entries — dotfiles
+and dot-directories such as `.git` — are excluded from every listing, search,
+and the link graph, and pagination cursors (`from`/`next_from`) let an agent page
+a large vault without pulling the whole tree at once.
 
 Wiki-links use Obsidian-style resolution: `[[note-name]]` matches the file named
 `note-name.md` anywhere in the vault (by basename, case-insensitive); an
@@ -43,6 +47,28 @@ avoid the O(N×M) cost of the line-diff — similar to how GitHub hides diffs fo
 huge files. Note that the approval/confirmation prompt for a write is shown by
 the **client** (e.g. Claude Desktop's "allow tool" dialog), not by this server —
 MCP has no server-rendered diff-approval UI.
+
+## Search & discovery
+
+Two complementary tools, deliberately separate because their result shapes
+differ — content matches vs. a list of paths:
+
+- `search` — **content** search backed by
+  [ripgrep](https://github.com/BurntSushi/ripgrep): a regular expression (or a
+  `fixed_strings` literal), smart- or exact-case, optionally narrowed by `path`
+  (a subtree) and `glob` (filenames, e.g. `*.md`, or `!*.log` to exclude).
+  Returns line matches, capped by `max_results` and streamed so a broad query
+  stops early rather than draining ripgrep.
+- `find_files` — **name** discovery backed by
+  [fd](https://github.com/sharkdp/fd): a regex or `glob` name pattern, `type`
+  file/dir, `path` scope. Returns a sorted, cursor-paginated list of paths.
+
+Both require their binary on `PATH` (`rg`, `fd`), confine the scope inside the
+served folder, do not follow symlinks, and skip hidden files, `.git`, and
+gitignored paths by default.
+
+Frontmatter-field search and LanceDB-backed semantic search are planned to land
+as their own tools, on the same principle — one tool per result shape.
 
 ## Git-backed writes & history
 
@@ -186,6 +212,6 @@ claude mcp add --transport http kb http://your-host:8080/ \
 
 - HTTP auth is a single shared bearer token; no per-user identity or OAuth.
 - No built-in TLS — terminate TLS at a reverse proxy for internet exposure.
-- Search is plain case-insensitive substring (no regex), and walks the whole
-  tree on each call with no ignore-list.
+- `search` and `find_files` shell out to `rg` and `fd` — both must be installed
+  on the host.
 - Single served folder per process.
