@@ -1,5 +1,5 @@
-// kbmcp is a small MCP server (stdio) that exposes a single folder for
-// browsing, substring search, and targeted reads.
+// kbmcp is a small MCP server that exposes a single git-backed folder for
+// browsing, full-text and filename search, targeted reads, and committed edits.
 package main
 
 import (

@@ -138,21 +138,34 @@ by an MCP client, not run interactively.
 
 ### HTTP (centralized — reachable over the network)
 
-Serves the same tools over Streamable HTTP. A bearer token is **required**; set
-it via `$KBMCP_TOKEN` (preferred — keeps it out of the process list) or `-token`.
+Serves the same MCP tools and the REST surface over Streamable HTTP. There are
+two modes, chosen by whether a token is set.
+
+**Standalone, with a bearer token** — binds all interfaces (`0.0.0.0`) and
+requires `Authorization: Bearer <token>` on every request (constant-time
+compared; anything else gets `401`). Set the token via `$KBMCP_TOKEN`
+(preferred — keeps it out of the process list) or `-token`:
 
 ```sh
 KBMCP_TOKEN=your-secret ./kbmcp -http :8080 /path/to/folder
 ```
 
-Every request must carry `Authorization: Bearer your-secret`; anything else gets
-`401`.
+**Behind an auth gateway (no token)** — with no token set, the server binds
+`127.0.0.1` only and does no auth of its own, trusting a reverse proxy in front
+of it (e.g. Caddy `forward_auth`) to authenticate the caller and inject their
+identity as `X-Volume-User` / `X-Volume-Scopes` headers. Because only localhost
+can connect, those headers are trustworthy; the server logs them but does not
+itself enforce scopes. This is how it runs behind an OAuth gateway:
 
-**Network safety:** traffic is plain HTTP, so the token and file contents are
-unencrypted on the wire. Only expose this on a trusted network — a home LAN or a
-[Tailscale](https://tailscale.com) tailnet. For access across the open internet,
-put it behind a TLS-terminating reverse proxy (Caddy/nginx) rather than exposing
-the port directly.
+```sh
+./kbmcp -http :8070 /path/to/folder      # loopback only; the gateway does auth
+```
+
+**Network safety:** traffic is plain HTTP, so in token mode the bearer token and
+file contents are unencrypted on the wire — only expose it on a trusted network,
+a home LAN or a [Tailscale](https://tailscale.com) tailnet. For internet
+exposure, prefer the gateway mode: a TLS-terminating reverse proxy (Caddy/nginx)
+handles TLS and auth, and the server itself never leaves loopback.
 
 ## Logs
 
@@ -210,7 +223,9 @@ claude mcp add --transport http kb http://your-host:8080/ \
 
 ## Notes / not-yet-done
 
-- HTTP auth is a single shared bearer token; no per-user identity or OAuth.
+- HTTP auth is either a single shared bearer token, or delegated to a fronting
+  gateway (which can add per-user identity / OAuth); the server logs the injected
+  identity but does not enforce scopes itself.
 - No built-in TLS — terminate TLS at a reverse proxy for internet exposure.
 - `search` and `find_files` shell out to `rg` and `fd` — both must be installed
   on the host.
