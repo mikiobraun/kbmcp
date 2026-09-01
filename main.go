@@ -40,13 +40,18 @@ func main() {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_files",
-		Description: "List files and folders within the served folder. Use 'path' to scope to a subfolder and 'recursive' to walk subfolders. Results are sorted by path and paginated: at most 'max_results' entries (default 200); if 'truncated' is set, call again with 'from' set to the returned 'next_from' to get the next page.",
+		Description: "List files and folders within the served folder. Use 'path' to scope to a subfolder and 'recursive' to walk subfolders. Order with 'sort' ('path' default, or 'modified' for last-change time) and 'sort_reverse' (e.g. sort=modified + sort_reverse=true gives newest first). Paginated: at most 'max_results' entries (default 200); if 'truncated' is set, call again with 'from' set to the returned 'next_from' to get the next page.",
 	}, ListFiles)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search",
-		Description: "Case-insensitive substring search across text files in the served folder. Returns file paths with line numbers and the matching lines.",
+		Description: "Full-text search across the served folder (ripgrep). 'query' is a regular expression unless 'fixed_strings' is set; matching is smart-case unless 'case_sensitive' is set. Scope with 'path', restrict to filenames with 'glob' (e.g. '*.md'), cap with 'max_results'. Returns file paths with line numbers and the matching lines.",
 	}, Search)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "find_files",
+		Description: "Find files or directories by name (fd). 'pattern' is a regular expression unless 'glob' is set (e.g. '*.md'). 'type' is 'file' (default) or 'dir'. Scope with 'path'. Returns sorted paths, paginated: at most 'max_results' (default 200); if 'truncated', call again with 'from' set to 'next_from'. Hidden files and .git are skipped.",
+	}, FindFiles)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "read_lines",

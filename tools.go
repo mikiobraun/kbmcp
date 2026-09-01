@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -37,17 +38,20 @@ const (
 type ListInput struct {
 	Path      string `json:"path,omitempty" jsonschema:"folder to list, relative to the served root; empty means the root"`
 	Recursive bool   `json:"recursive,omitempty" jsonschema:"if true, walk subfolders recursively"`
-	// Pagination. Entries are sorted by path; From is an exclusive lower bound
-	// (return only paths that sort strictly after it), so paging is stateless:
-	// pass the previous page's next_from to get the next page.
-	From       string `json:"from,omitempty" jsonschema:"pagination cursor: only return entries whose path sorts strictly after this string; pass the previous page's next_from to continue"`
+	Sort      string `json:"sort,omitempty" jsonschema:"sort order: 'path' (default) or 'modified' (by last-change time)"`
+	Reverse   bool   `json:"sort_reverse,omitempty" jsonschema:"reverse the sort order; e.g. sort=modified + sort_reverse=true lists newest first"`
+	// Pagination is stateless: From is an exclusive lower bound on the sort key,
+	// so pass the previous page's next_from to continue. For sort=path the key is
+	// the path; for sort=modified it is an opaque cursor (do not construct it).
+	From       string `json:"from,omitempty" jsonschema:"pagination cursor: pass the previous page's next_from to get the next page"`
 	MaxResults int    `json:"max_results,omitempty" jsonschema:"maximum entries to return (default 200, capped at 1000)"`
 }
 
 type Entry struct {
-	Path  string `json:"path"`
-	IsDir bool   `json:"is_dir"`
-	Size  int64  `json:"size"`
+	Path     string `json:"path"`
+	IsDir    bool   `json:"is_dir"`
+	Size     int64  `json:"size"`
+	Modified string `json:"modified"` // last-change time, RFC3339 UTC
 }
 
 type ListOutput struct {
@@ -58,10 +62,31 @@ type ListOutput struct {
 	Truncated bool   `json:"truncated"`
 }
 
+// entrySortKey is the value entries are ordered and paged by. For "modified" the
+// key is the mod time (RFC3339 sorts chronologically) with the path appended as
+// a tiebreaker, so the key is a total order and the pagination cursor is stable
+// even when several files share a timestamp.
+func entrySortKey(e Entry, sortBy string) string {
+	if sortBy == "modified" {
+		return e.Modified + "\t" + e.Path
+	}
+	return e.Path
+}
+
 func ListFiles(ctx context.Context, req *mcp.CallToolRequest, in ListInput) (*mcp.CallToolResult, ListOutput, error) {
 	dir, err := resolve(in.Path)
 	if err != nil {
 		return nil, ListOutput{}, err
+	}
+
+	entryFor := func(rel string, d fs.DirEntry) Entry {
+		var size int64
+		var mod string
+		if info, ierr := d.Info(); ierr == nil {
+			size = info.Size()
+			mod = info.ModTime().UTC().Format(time.RFC3339)
+		}
+		return Entry{Path: rel, IsDir: d.IsDir(), Size: size, Modified: mod}
 	}
 
 	var entries []Entry
@@ -73,33 +98,47 @@ func ListFiles(ctx context.Context, req *mcp.CallToolRequest, in ListInput) (*mc
 			if p == dir {
 				return nil
 			}
-			info, _ := d.Info()
-			var size int64
-			if info != nil {
-				size = info.Size()
+			if isHidden(d.Name()) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
 			}
-			entries = append(entries, Entry{Path: relPath(p), IsDir: d.IsDir(), Size: size})
+			entries = append(entries, entryFor(relPath(p), d))
 			return nil
 		})
 	} else {
 		var des []os.DirEntry
 		des, err = os.ReadDir(dir)
 		for _, d := range des {
-			info, _ := d.Info()
-			var size int64
-			if info != nil {
-				size = info.Size()
+			if isHidden(d.Name()) {
+				continue
 			}
-			entries = append(entries, Entry{Path: relPath(filepath.Join(dir, d.Name())), IsDir: d.IsDir(), Size: size})
+			entries = append(entries, entryFor(relPath(filepath.Join(dir, d.Name())), d))
 		}
 	}
 	if err != nil {
 		return nil, ListOutput{}, err
 	}
 
-	// Sort by path for a stable order, then take the page strictly after From.
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
-	start := sort.Search(len(entries), func(i int) bool { return entries[i].Path > in.From })
+	// Order by the chosen sort key, reversing if asked, then take the page after
+	// the cursor. In ascending order the next page is keys > From; in reversed
+	// (descending) order it is keys < From — both monotonic, so sort.Search works.
+	key := func(e Entry) string { return entrySortKey(e, in.Sort) }
+	sort.Slice(entries, func(i, j int) bool { return key(entries[i]) < key(entries[j]) })
+	if in.Reverse {
+		for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+			entries[i], entries[j] = entries[j], entries[i]
+		}
+	}
+	start := 0
+	if in.From != "" {
+		if in.Reverse {
+			start = sort.Search(len(entries), func(i int) bool { return key(entries[i]) < in.From })
+		} else {
+			start = sort.Search(len(entries), func(i int) bool { return key(entries[i]) > in.From })
+		}
+	}
 	page := entries[start:]
 
 	limit := in.MaxResults
@@ -113,7 +152,7 @@ func ListFiles(ctx context.Context, req *mcp.CallToolRequest, in ListInput) (*mc
 	if len(page) > limit {
 		out.Truncated = true
 		page = page[:limit]
-		out.NextFrom = page[len(page)-1].Path
+		out.NextFrom = key(page[len(page)-1])
 	}
 	out.Entries = page
 
@@ -123,7 +162,11 @@ func ListFiles(ctx context.Context, req *mcp.CallToolRequest, in ListInput) (*mc
 		if e.IsDir {
 			marker = "/"
 		}
-		fmt.Fprintf(&b, "%s%s\n", e.Path, marker)
+		if in.Sort == "modified" {
+			fmt.Fprintf(&b, "%s%s\t%s\n", e.Path, marker, e.Modified)
+		} else {
+			fmt.Fprintf(&b, "%s%s\n", e.Path, marker)
+		}
 	}
 	if b.Len() == 0 {
 		b.WriteString("(empty)\n")
@@ -132,105 +175,6 @@ func ListFiles(ctx context.Context, req *mcp.CallToolRequest, in ListInput) (*mc
 		fmt.Fprintf(&b, "... (%d shown; more remain — call again with from=%q)\n", len(page), out.NextFrom)
 	}
 	return textResult("%s", b.String()), out, nil
-}
-
-// ---- search ----
-
-type SearchInput struct {
-	Query      string `json:"query" jsonschema:"case-insensitive substring to search for"`
-	Path       string `json:"path,omitempty" jsonschema:"folder to scope the search to, relative to root; empty means the whole root"`
-	MaxResults int    `json:"max_results,omitempty" jsonschema:"maximum number of matches to return (default 100)"`
-}
-
-type Match struct {
-	Path string `json:"path"`
-	Line int    `json:"line"`
-	Text string `json:"text"`
-}
-
-type SearchOutput struct {
-	Matches   []Match `json:"matches"`
-	Truncated bool    `json:"truncated"`
-}
-
-func Search(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
-	if strings.TrimSpace(in.Query) == "" {
-		return nil, SearchOutput{}, fmt.Errorf("query must not be empty")
-	}
-	scope, err := resolve(in.Path)
-	if err != nil {
-		return nil, SearchOutput{}, err
-	}
-	limit := in.MaxResults
-	if limit <= 0 {
-		limit = 100
-	}
-	needle := strings.ToLower(in.Query)
-
-	var out SearchOutput
-	walkErr := filepath.WalkDir(scope, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil // skip unreadable entries rather than aborting
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if len(out.Matches) >= limit {
-			out.Truncated = true
-			return filepath.SkipAll
-		}
-		matchFile(ctx, p, needle, limit, &out)
-		return nil
-	})
-	if walkErr != nil {
-		return nil, SearchOutput{}, walkErr
-	}
-
-	var b strings.Builder
-	for _, m := range out.Matches {
-		fmt.Fprintf(&b, "%s:%d: %s\n", m.Path, m.Line, m.Text)
-	}
-	if b.Len() == 0 {
-		b.WriteString("(no matches)\n")
-	}
-	if out.Truncated {
-		fmt.Fprintf(&b, "... (truncated at %d matches)\n", limit)
-	}
-	return textResult("%s", b.String()), out, nil
-}
-
-// matchFile scans a single file for needle, appending matches to out until limit.
-func matchFile(ctx context.Context, path, needle string, limit int, out *SearchOutput) {
-	f, err := os.Open(path)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-
-	// Peek for binary content before scanning lines.
-	buf := make([]byte, 512)
-	n, _ := f.Read(buf)
-	if looksBinary(buf[:n]) {
-		return
-	}
-	if _, err := f.Seek(0, 0); err != nil {
-		return
-	}
-
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	lineNo := 0
-	for sc.Scan() {
-		lineNo++
-		line := sc.Text()
-		if strings.Contains(strings.ToLower(line), needle) {
-			out.Matches = append(out.Matches, Match{Path: relPath(path), Line: lineNo, Text: strings.TrimSpace(line)})
-			if len(out.Matches) >= limit {
-				out.Truncated = true
-				return
-			}
-		}
-	}
 }
 
 // ---- read_lines ----
@@ -309,10 +253,10 @@ type ReadFileInput struct {
 }
 
 type ReadFileOutput struct {
-	Path     string `json:"path"`
-	Content  string `json:"content"`
-	Bytes    int    `json:"bytes"`
-	Truncated bool  `json:"truncated"`
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	Bytes     int    `json:"bytes"`
+	Truncated bool   `json:"truncated"`
 }
 
 func ReadFile(ctx context.Context, req *mcp.CallToolRequest, in ReadFileInput) (*mcp.CallToolResult, ReadFileOutput, error) {

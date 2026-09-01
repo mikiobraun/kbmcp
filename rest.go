@@ -142,6 +142,9 @@ func restListDir(w http.ResponseWriter, dir string) {
 	}
 	entries := []entry{}
 	for _, d := range des {
+		if isHidden(d.Name()) {
+			continue
+		}
 		var size int64
 		if info, err := d.Info(); err == nil {
 			size = info.Size()

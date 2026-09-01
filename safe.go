@@ -69,3 +69,12 @@ func relPath(abs string) string {
 func looksBinary(b []byte) bool {
 	return bytes.IndexByte(b, 0) != -1
 }
+
+// isHidden reports whether a file or directory name is a dotfile (starts with
+// "."). Hidden entries are excluded from every listing, search, and the link
+// graph — which, among other things, keeps the vault's own .git tree out of
+// results. In a recursive walk, a hidden directory should be pruned entirely
+// (filepath.SkipDir), not just skipped as one entry.
+func isHidden(name string) bool {
+	return strings.HasPrefix(name, ".")
+}

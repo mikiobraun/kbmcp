@@ -55,6 +55,12 @@ func buildGraph() (*linkGraph, error) {
 		if walkErr != nil {
 			return nil // skip unreadable entries rather than aborting
 		}
+		if isHidden(d.Name()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if d.IsDir() || !strings.EqualFold(filepath.Ext(p), ".md") {
 			return nil
 		}
