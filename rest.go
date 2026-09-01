@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -125,6 +126,29 @@ func restPut(w http.ResponseWriter, r *http.Request) {
 		"created":   res.Created,
 		"committed": res.Committed,
 	})
+}
+
+// restHistory returns recent commits as JSON: GET /history?max=&path=&since=.
+// It mirrors the history tool (short hash, dates, author, subject) so the editor
+// can show a "recent changes" log without speaking MCP.
+func restHistory(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	max := 0
+	if s := q.Get("max"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil {
+			max = n
+		}
+	}
+	commits, err := commitLog(max, q.Get("since"), q.Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if commits == nil {
+		commits = []Commit{}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(map[string]any{"commits": commits})
 }
 
 // restListDir returns a JSON listing of a directory's immediate entries.

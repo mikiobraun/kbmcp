@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -111,5 +113,37 @@ func TestRestPut(t *testing.T) {
 	}
 	if got := gitLog(t, root); len(got) != 2 || got[0] != "update a" {
 		t.Fatalf("log = %v", got)
+	}
+}
+
+// GET /history returns recent commits as JSON, newest first.
+func TestRestHistory(t *testing.T) {
+	newRepo(t)
+	ctx := context.Background()
+	for _, c := range []struct{ path, msg string }{{"a.md", "add a"}, {"b.md", "add b"}} {
+		if _, _, err := WriteFile(ctx, nil, WriteFileInput{Path: c.path, Content: "x\n", Message: c.msg}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	restHistory(rec, httptest.NewRequest("GET", "/history?max=10", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Commits []Commit `json:"commits"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Commits) != 2 {
+		t.Fatalf("want 2 commits, got %d", len(body.Commits))
+	}
+	if body.Commits[0].Subject != "add b" {
+		t.Errorf("newest subject = %q, want 'add b'", body.Commits[0].Subject)
+	}
+	if body.Commits[0].Hash == "" || body.Commits[0].Relative == "" {
+		t.Errorf("commit missing hash/relative: %+v", body.Commits[0])
 	}
 }

@@ -40,8 +40,9 @@ type HistoryOutput struct {
 	Commits []Commit `json:"commits"`
 }
 
-func History(ctx context.Context, req *mcp.CallToolRequest, in HistoryInput) (*mcp.CallToolResult, HistoryOutput, error) {
-	max := in.Max
+// commitLog returns recent commits, applying the same max/since/path handling as
+// the history tool. Shared by the history MCP tool and the REST /history endpoint.
+func commitLog(max int, since, path string) ([]Commit, error) {
 	if max <= 0 {
 		max = defaultLogMax
 	}
@@ -54,17 +55,17 @@ func History(ctx context.Context, req *mcp.CallToolRequest, in HistoryInput) (*m
 		"--pretty=format:%h" + logSep + "%cI" + logSep + "%cr" + logSep + "%an" + logSep + "%s",
 	}
 
-	if in.Since != "" {
-		if !validRef(in.Since) {
-			return nil, HistoryOutput{}, fmt.Errorf("invalid since ref: %q", in.Since)
+	if since != "" {
+		if !validRef(since) {
+			return nil, fmt.Errorf("invalid since ref: %q", since)
 		}
-		args = append(args, in.Since+"..HEAD")
+		args = append(args, since+"..HEAD")
 	}
 
-	if in.Path != "" {
-		abs, err := resolve(in.Path)
+	if path != "" {
+		abs, err := resolve(path)
 		if err != nil {
-			return nil, HistoryOutput{}, err
+			return nil, err
 		}
 		rel := relPath(abs)
 		// --follow tracks renames but only works for a single existing file.
@@ -76,11 +77,10 @@ func History(ctx context.Context, req *mcp.CallToolRequest, in HistoryInput) (*m
 
 	out, err := runGit(args...)
 	if err != nil {
-		return nil, HistoryOutput{}, err
+		return nil, err
 	}
 
-	var res HistoryOutput
-	var b strings.Builder
+	var commits []Commit
 	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 		if line == "" {
 			continue
@@ -89,14 +89,25 @@ func History(ctx context.Context, req *mcp.CallToolRequest, in HistoryInput) (*m
 		if len(f) != 5 {
 			continue
 		}
-		c := Commit{Hash: f[0], Date: f[1], Relative: f[2], Author: f[3], Subject: f[4]}
-		res.Commits = append(res.Commits, c)
+		commits = append(commits, Commit{Hash: f[0], Date: f[1], Relative: f[2], Author: f[3], Subject: f[4]})
+	}
+	return commits, nil
+}
+
+func History(ctx context.Context, req *mcp.CallToolRequest, in HistoryInput) (*mcp.CallToolResult, HistoryOutput, error) {
+	commits, err := commitLog(in.Max, in.Since, in.Path)
+	if err != nil {
+		return nil, HistoryOutput{}, err
+	}
+
+	var b strings.Builder
+	for _, c := range commits {
 		fmt.Fprintf(&b, "%s  %s  %s  %s\n", c.Hash, c.Relative, c.Author, c.Subject)
 	}
 	if b.Len() == 0 {
 		b.WriteString("(no commits)\n")
 	}
-	return textResult("%s", b.String()), res, nil
+	return textResult("%s", b.String()), HistoryOutput{Commits: commits}, nil
 }
 
 // ---- diff ----

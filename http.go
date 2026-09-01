@@ -35,6 +35,7 @@ func serveHTTP(server *mcp.Server, addr, token string) error {
 	mux.Handle("/", mcpHandler)
 	mux.HandleFunc("GET /files/", restGet)
 	mux.HandleFunc("PUT /files/", restPut)
+	mux.HandleFunc("GET /history", restHistory)
 
 	if token == "" {
 		bind := "127.0.0.1:" + port
