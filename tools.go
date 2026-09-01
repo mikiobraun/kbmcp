@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -25,9 +26,22 @@ func textResult(format string, a ...any) *mcp.CallToolResult {
 
 // ---- list_files ----
 
+// defaultListMax / maxListMax bound how many entries one list_files call
+// returns, so an agent listing a large (e.g. recursively walked) vault gets a
+// bounded page instead of the whole tree at once.
+const (
+	defaultListMax = 200
+	maxListMax     = 1000
+)
+
 type ListInput struct {
 	Path      string `json:"path,omitempty" jsonschema:"folder to list, relative to the served root; empty means the root"`
 	Recursive bool   `json:"recursive,omitempty" jsonschema:"if true, walk subfolders recursively"`
+	// Pagination. Entries are sorted by path; From is an exclusive lower bound
+	// (return only paths that sort strictly after it), so paging is stateless:
+	// pass the previous page's next_from to get the next page.
+	From       string `json:"from,omitempty" jsonschema:"pagination cursor: only return entries whose path sorts strictly after this string; pass the previous page's next_from to continue"`
+	MaxResults int    `json:"max_results,omitempty" jsonschema:"maximum entries to return (default 200, capped at 1000)"`
 }
 
 type Entry struct {
@@ -38,6 +52,10 @@ type Entry struct {
 
 type ListOutput struct {
 	Entries []Entry `json:"entries"`
+	// NextFrom is the cursor to pass as From for the next page; empty when this
+	// page is the last one. Truncated says whether more entries remain.
+	NextFrom  string `json:"next_from,omitempty"`
+	Truncated bool   `json:"truncated"`
 }
 
 func ListFiles(ctx context.Context, req *mcp.CallToolRequest, in ListInput) (*mcp.CallToolResult, ListOutput, error) {
@@ -79,8 +97,28 @@ func ListFiles(ctx context.Context, req *mcp.CallToolRequest, in ListInput) (*mc
 		return nil, ListOutput{}, err
 	}
 
+	// Sort by path for a stable order, then take the page strictly after From.
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	start := sort.Search(len(entries), func(i int) bool { return entries[i].Path > in.From })
+	page := entries[start:]
+
+	limit := in.MaxResults
+	if limit <= 0 {
+		limit = defaultListMax
+	}
+	if limit > maxListMax {
+		limit = maxListMax
+	}
+	out := ListOutput{}
+	if len(page) > limit {
+		out.Truncated = true
+		page = page[:limit]
+		out.NextFrom = page[len(page)-1].Path
+	}
+	out.Entries = page
+
 	var b strings.Builder
-	for _, e := range entries {
+	for _, e := range page {
 		marker := ""
 		if e.IsDir {
 			marker = "/"
@@ -90,7 +128,10 @@ func ListFiles(ctx context.Context, req *mcp.CallToolRequest, in ListInput) (*mc
 	if b.Len() == 0 {
 		b.WriteString("(empty)\n")
 	}
-	return textResult("%s", b.String()), ListOutput{Entries: entries}, nil
+	if out.Truncated {
+		fmt.Fprintf(&b, "... (%d shown; more remain — call again with from=%q)\n", len(page), out.NextFrom)
+	}
+	return textResult("%s", b.String()), out, nil
 }
 
 // ---- search ----
@@ -302,76 +343,140 @@ func ReadFile(ctx context.Context, req *mcp.CallToolRequest, in ReadFileInput) (
 // ---- write_file ----
 
 type WriteFileInput struct {
-	Path    string `json:"path" jsonschema:"file to write, relative to root; parent folders are created as needed"`
-	Content string `json:"content" jsonschema:"full new contents of the file"`
-	DryRun  bool   `json:"dry_run,omitempty" jsonschema:"if true, return the diff without writing anything"`
+	Path        string `json:"path" jsonschema:"file to write, relative to root; parent folders are created as needed"`
+	Content     string `json:"content" jsonschema:"full new contents of the file"`
+	Message     string `json:"message" jsonschema:"commit message (required); the file is committed after being written"`
+	AuthorName  string `json:"author_name,omitempty" jsonschema:"name to attribute the commit to (e.g. the agent making the change); defaults to the repo's configured identity"`
+	AuthorEmail string `json:"author_email,omitempty" jsonschema:"email to attribute the commit to; defaults to the repo's configured identity"`
+	DryRun      bool   `json:"dry_run,omitempty" jsonschema:"if true, return the diff without writing or committing anything"`
 }
 
 type WriteFileOutput struct {
-	Path    string `json:"path"`
-	Created bool   `json:"created"`
-	Bytes   int    `json:"bytes"`
-	DryRun  bool   `json:"dry_run"`
-	Diff    string `json:"diff"`
+	Path      string `json:"path"`
+	Created   bool   `json:"created"`
+	Bytes     int    `json:"bytes"`
+	DryRun    bool   `json:"dry_run"`
+	Committed bool   `json:"committed"`
+	Diff      string `json:"diff"`
+}
+
+// writeOutcome is the result of writeAndCommit.
+type writeOutcome struct {
+	Abs       string // resolved absolute path written
+	Old       string // previous content (for diffing), empty if created or binary
+	Created   bool   // the file did not exist before
+	Committed bool   // a commit was actually made
+}
+
+// readForWrite returns the current content of an already-resolved path (empty if
+// it doesn't exist or is binary) and whether a write there would create a new
+// file. It errors if the path is an existing directory.
+func readForWrite(abs string) (old string, created bool, err error) {
+	info, statErr := os.Stat(abs)
+	if statErr != nil {
+		return "", true, nil
+	}
+	if info.IsDir() {
+		return "", false, fmt.Errorf("%s is a directory", relPath(abs))
+	}
+	if data, rdErr := os.ReadFile(abs); rdErr == nil && !looksBinary(data[:min(len(data), 512)]) {
+		old = string(data)
+	}
+	return old, false, nil
+}
+
+// writeAndCommit creates or overwrites the file at rel with content, creating
+// parent folders, then commits it with message (required) and the optional
+// author identity. It is the shared core behind both write_file and the REST
+// PUT handler.
+func writeAndCommit(rel, content, message, authorName, authorEmail string) (writeOutcome, error) {
+	if strings.TrimSpace(message) == "" {
+		return writeOutcome{}, fmt.Errorf("message is required")
+	}
+	abs, err := resolve(rel)
+	if err != nil {
+		return writeOutcome{}, err
+	}
+	old, created, err := readForWrite(abs)
+	if err != nil {
+		return writeOutcome{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return writeOutcome{}, err
+	}
+	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+		return writeOutcome{}, err
+	}
+	committed, err := gitCommit([]string{abs}, message, authorName, authorEmail)
+	if err != nil {
+		return writeOutcome{}, err
+	}
+	return writeOutcome{Abs: abs, Old: old, Created: created, Committed: committed}, nil
 }
 
 func WriteFile(ctx context.Context, req *mcp.CallToolRequest, in WriteFileInput) (*mcp.CallToolResult, WriteFileOutput, error) {
+	if strings.TrimSpace(in.Message) == "" {
+		return nil, WriteFileOutput{}, fmt.Errorf("message is required")
+	}
 	path, err := resolve(in.Path)
 	if err != nil {
 		return nil, WriteFileOutput{}, err
 	}
 
-	var old string
-	created := true
-	if info, statErr := os.Stat(path); statErr == nil {
-		if info.IsDir() {
-			return nil, WriteFileOutput{}, fmt.Errorf("%s is a directory", in.Path)
-		}
-		created = false
-		if data, rdErr := os.ReadFile(path); rdErr == nil && !looksBinary(data[:min(len(data), 512)]) {
-			old = string(data)
-		}
-	}
-
-	diff := diffText(old, in.Content, 3)
-
-	out := WriteFileOutput{Path: relPath(path), Created: created, Bytes: len(in.Content), DryRun: in.DryRun, Diff: diff}
 	if in.DryRun {
+		old, created, err := readForWrite(path)
+		if err != nil {
+			return nil, WriteFileOutput{}, err
+		}
+		diff := diffText(old, in.Content, 3)
+		out := WriteFileOutput{Path: relPath(path), Created: created, Bytes: len(in.Content), DryRun: true, Diff: diff}
 		return textResult("dry run, no changes written.\n--- diff ---\n%s", diff), out, nil
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, WriteFileOutput{}, err
-	}
-	if err := os.WriteFile(path, []byte(in.Content), 0o644); err != nil {
+	res, err := writeAndCommit(in.Path, in.Content, in.Message, in.AuthorName, in.AuthorEmail)
+	if err != nil {
 		return nil, WriteFileOutput{}, err
 	}
 
+	diff := diffText(res.Old, in.Content, 3)
+	out := WriteFileOutput{Path: relPath(res.Abs), Created: res.Created, Bytes: len(in.Content), Committed: res.Committed, Diff: diff}
+
 	verb := "updated"
-	if created {
+	if res.Created {
 		verb = "created"
 	}
-	return textResult("%s %s (%d bytes).\n--- diff ---\n%s", verb, relPath(path), len(in.Content), diff), out, nil
+	status := "committed"
+	if !res.Committed {
+		status = "no changes to commit"
+	}
+	return textResult("%s %s (%d bytes) — %s.\n--- diff ---\n%s", verb, relPath(res.Abs), len(in.Content), status, diff), out, nil
 }
 
 // ---- edit_file ----
 
 type EditFileInput struct {
-	Path       string `json:"path" jsonschema:"file to edit, relative to root"`
-	OldString  string `json:"old_string" jsonschema:"exact text to replace; must occur exactly once unless replace_all is set"`
-	NewString  string `json:"new_string" jsonschema:"text to replace it with"`
-	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"replace every occurrence instead of requiring a unique match"`
-	DryRun     bool   `json:"dry_run,omitempty" jsonschema:"if true, return the diff without writing anything"`
+	Path        string `json:"path" jsonschema:"file to edit, relative to root"`
+	OldString   string `json:"old_string" jsonschema:"exact text to replace; must occur exactly once unless replace_all is set"`
+	NewString   string `json:"new_string" jsonschema:"text to replace it with"`
+	Message     string `json:"message" jsonschema:"commit message (required); the file is committed after being edited"`
+	AuthorName  string `json:"author_name,omitempty" jsonschema:"name to attribute the commit to (e.g. the agent making the change); defaults to the repo's configured identity"`
+	AuthorEmail string `json:"author_email,omitempty" jsonschema:"email to attribute the commit to; defaults to the repo's configured identity"`
+	ReplaceAll  bool   `json:"replace_all,omitempty" jsonschema:"replace every occurrence instead of requiring a unique match"`
+	DryRun      bool   `json:"dry_run,omitempty" jsonschema:"if true, return the diff without writing or committing anything"`
 }
 
 type EditFileOutput struct {
 	Path         string `json:"path"`
 	Replacements int    `json:"replacements"`
 	DryRun       bool   `json:"dry_run"`
+	Committed    bool   `json:"committed"`
 	Diff         string `json:"diff"`
 }
 
 func EditFile(ctx context.Context, req *mcp.CallToolRequest, in EditFileInput) (*mcp.CallToolResult, EditFileOutput, error) {
+	if strings.TrimSpace(in.Message) == "" {
+		return nil, EditFileOutput{}, fmt.Errorf("message is required")
+	}
 	if in.OldString == "" {
 		return nil, EditFileOutput{}, fmt.Errorf("old_string must not be empty")
 	}
@@ -421,5 +526,16 @@ func EditFile(ctx context.Context, req *mcp.CallToolRequest, in EditFileInput) (
 	if err := os.WriteFile(path, []byte(updated), info.Mode().Perm()); err != nil {
 		return nil, EditFileOutput{}, err
 	}
-	return textResult("edited %s (%d replacement(s)).\n--- diff ---\n%s", relPath(path), count, diff), out, nil
+
+	committed, err := gitCommit([]string{path}, in.Message, in.AuthorName, in.AuthorEmail)
+	if err != nil {
+		return nil, EditFileOutput{}, err
+	}
+	out.Committed = committed
+
+	status := "committed"
+	if !committed {
+		status = "no changes to commit"
+	}
+	return textResult("edited %s (%d replacement(s)) — %s.\n--- diff ---\n%s", relPath(path), count, status, diff), out, nil
 }

@@ -30,6 +30,9 @@ func main() {
 	if err := setRoot(dir); err != nil {
 		log.Fatalf("kbmcp: %v", err)
 	}
+	if !isGitRepo() {
+		log.Fatalf("kbmcp: %s is not a git repository; run 'git init' there and set user.name/user.email (writes are committed to its history)", root)
+	}
 	log.Printf("kbmcp: serving %s", root)
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "kbmcp", Version: "0.1.0"}, nil)
@@ -37,7 +40,7 @@ func main() {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_files",
-		Description: "List files and folders within the served folder. Use 'path' to scope to a subfolder and 'recursive' to walk subfolders.",
+		Description: "List files and folders within the served folder. Use 'path' to scope to a subfolder and 'recursive' to walk subfolders. Results are sorted by path and paginated: at most 'max_results' entries (default 200); if 'truncated' is set, call again with 'from' set to the returned 'next_from' to get the next page.",
 	}, ListFiles)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -57,13 +60,33 @@ func main() {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "write_file",
-		Description: "Create or overwrite a text file with the given content. Parent folders are created as needed. Pass dry_run to preview the diff without writing.",
+		Description: "Create or overwrite a text file with the given content, then commit it. A commit 'message' is required. Parent folders are created as needed. Pass dry_run to preview the diff without writing or committing.",
 	}, WriteFile)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "edit_file",
-		Description: "Replace an exact string in a text file. old_string must occur exactly once unless replace_all is set. Pass dry_run to preview the diff without writing.",
+		Description: "Replace an exact string in a text file, then commit it. old_string must occur exactly once unless replace_all is set. A commit 'message' is required. Pass dry_run to preview the diff without writing or committing.",
 	}, EditFile)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "batch_edits",
+		Description: "Apply an ordered mix of write (new/overwritten files) and edit (string replacements) operations across one or more files and commit them together as a single commit. All ops are validated first; if any is invalid, nothing is written. A commit 'message' is required. Pass dry_run to preview all diffs without writing or committing.",
+	}, BatchEdits)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "history",
+		Description: "Compact commit history: short hash, relative time, author, and subject. Scope to a file or folder with 'path' (renames are followed for a single file), cap with 'max', or pass 'since' (a ref) to see only what changed after a point you already know.",
+	}, History)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "diff",
+		Description: "Show a unified diff between two commits (defaults from=HEAD~1 to=HEAD). Scope with 'path', or pass stat=true for a compact per-file summary of insertions/deletions. Renames are detected.",
+	}, Diff)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "file_at",
+		Description: "Read the contents of a file as it was at a given commit ref (e.g. a hash from history, or HEAD~1).",
+	}, FileAt)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "backlinks",
