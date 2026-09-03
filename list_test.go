@@ -10,6 +10,24 @@ import (
 	"time"
 )
 
+// resolve() refuses any hidden path component, so reads/writes/edits by exact
+// path can't reach a dotfile or the vault's own .git (matching listings/search).
+func TestResolveRejectsHiddenPaths(t *testing.T) {
+	if err := setRoot(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{".env", ".git", ".git/config", "notes/.secret", "a/.hidden/b.md"} {
+		if _, err := resolve(bad); err == nil {
+			t.Errorf("resolve(%q) should be rejected as a hidden path", bad)
+		}
+	}
+	for _, ok := range []string{"", ".", "notes/a.md", "a/b/c.md"} {
+		if _, err := resolve(ok); err != nil {
+			t.Errorf("resolve(%q) should be allowed, got %v", ok, err)
+		}
+	}
+}
+
 // Dotfiles and dot-directories (e.g. .git) are excluded from listings and
 // searches, and a hidden directory is pruned entirely, not just skipped once.
 func TestListFilesHidesDotfiles(t *testing.T) {

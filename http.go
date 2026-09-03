@@ -10,17 +10,22 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// serveHTTP runs the MCP server over Streamable HTTP. The token decides the
-// security model:
-//
-//   - token set   → bind 0.0.0.0 and require "Authorization: Bearer <token>".
-//   - no token    → bind 127.0.0.1 only, and trust an auth gateway (Caddy
-//     forward_auth) in front of us. Since only localhost can connect, the
-//     X-Volume-User header Caddy injects can be trusted.
+// serveHTTP runs the MCP server over Streamable HTTP behind an auth gateway. It
+// binds the address passed to -http (loopback by default, when only a port is
+// given) and always requires a shared bearer token ("Authorization: Bearer
+// <token>"): the gateway (Caddy) is the only ingress and injects that token,
+// which proves the caller is the gateway — so the X-Volume-User /
+// X-Volume-Scopes headers it also injects can be trusted. A same-host gateway
+// reaches loopback; a gateway on another host (e.g. a VM over Tailscale) needs a
+// routable bind like the Tailscale IP — pass it as -http 100.x.y.z:8070. For an
+// unauthenticated local server, use stdio instead.
 func serveHTTP(server *mcp.Server, addr, token string) error {
-	_, port, err := net.SplitHostPort(addr)
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("invalid -http address %q: %w", addr, err)
+	}
+	if token == "" {
+		return fmt.Errorf("HTTP mode requires a bearer token: set $KBMCP_TOKEN or pass -token (use stdio for an unauthenticated local server)")
 	}
 
 	mcpHandler := mcp.NewStreamableHTTPHandler(
@@ -37,14 +42,14 @@ func serveHTTP(server *mcp.Server, addr, token string) error {
 	mux.HandleFunc("PUT /files/", restPut)
 	mux.HandleFunc("GET /history", restHistory)
 
-	if token == "" {
-		bind := "127.0.0.1:" + port
-		log.Printf("kbmcp: listening on %s (no token; trusting forward-auth gateway)", bind)
-		return http.ListenAndServe(bind, logIdentity(mux))
+	// Default to loopback when only a port was given; the gateway is the sole
+	// ingress and the token proves the caller is the gateway. Bind a routable
+	// address (e.g. the Tailscale IP) only when the gateway is on another host.
+	if host == "" {
+		host = "127.0.0.1"
 	}
-
-	bind := "0.0.0.0:" + port
-	log.Printf("kbmcp: listening on %s (bearer-token auth)", bind)
+	bind := net.JoinHostPort(host, port)
+	log.Printf("kbmcp: listening on %s (bearer-token auth, behind gateway)", bind)
 	return http.ListenAndServe(bind, requireToken(token, logIdentity(mux)))
 }
 
@@ -65,10 +70,28 @@ func requireToken(token string, next http.Handler) http.Handler {
 		got := []byte(r.Header.Get("Authorization"))
 		// Constant-time compare to avoid leaking the token via timing.
 		if subtle.ConstantTimeCompare(got, want) != 1 {
+			// Log the rejection so a mis-wired gateway is visible. Distinguish no
+			// token (gateway not injecting one) from a wrong token (mismatch
+			// between Caddy's and kbmcp's KBMCP_TOKEN, or a client reaching us
+			// directly). Never log the token value itself.
+			reason := "no bearer token"
+			if len(got) > 0 {
+				reason = "wrong bearer token"
+			}
+			log.Printf("kbmcp: 401 %s %s: %s (from %s)", r.Method, r.URL.Path, reason, clientIP(r))
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// clientIP is the best-effort caller address for logs: the gateway sets
+// X-Forwarded-For with the real client; otherwise it's the direct peer.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		return xff
+	}
+	return r.RemoteAddr
 }

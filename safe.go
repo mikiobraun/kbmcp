@@ -53,6 +53,15 @@ func resolve(rel string) (string, error) {
 	if relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path escapes the served folder: %q", rel)
 	}
+	// Refuse hidden paths (dotfiles / dot-dirs like .git) at the one chokepoint
+	// every read, write, and edit passes through — so direct access matches what
+	// listings and search already exclude, and a write can't reach into the
+	// vault's own .git and corrupt it.
+	for _, part := range strings.Split(relToRoot, string(filepath.Separator)) {
+		if part != "." && strings.HasPrefix(part, ".") {
+			return "", fmt.Errorf("hidden path is not served: %q", rel)
+		}
+	}
 	return abs, nil
 }
 

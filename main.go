@@ -13,8 +13,9 @@ import (
 )
 
 func main() {
-	httpAddr := flag.String("http", "", "serve over HTTP on this address (e.g. :8080) instead of stdio")
-	token := flag.String("token", os.Getenv("KBMCP_TOKEN"), "bearer token required in HTTP mode (defaults to $KBMCP_TOKEN)")
+	httpAddr := flag.String("http", "", "serve over HTTP on this address instead of stdio; host defaults to loopback (e.g. :8070, or 100.x.y.z:8070 to bind a Tailscale IP for a remote gateway)")
+	token := flag.String("token", "", "bearer token for HTTP mode (default: $KBMCP_TOKEN, or KBMCP_TOKEN in the env file)")
+	envPath := flag.String("env", ".env", "env file loaded at startup (KEY=VALUE lines); real env vars win; a missing file is ignored")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: %s [flags] [folder]\n\n"+
 			"Serves [folder] (default: current directory) over MCP.\n"+
@@ -22,6 +23,15 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	// Load the env file before resolving env-derived config, so values in it are
+	// visible to os.Getenv below (real environment variables take precedence).
+	if err := loadEnvFile(*envPath); err != nil {
+		log.Printf("kbmcp: env file %s: %v", *envPath, err)
+	}
+	if *token == "" {
+		*token = os.Getenv("KBMCP_TOKEN")
+	}
 
 	dir := "."
 	if flag.NArg() > 0 {
