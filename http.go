@@ -57,7 +57,18 @@ func serveHTTP(server *mcp.Server, addr, token string) error {
 func logIdentity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if user := r.Header.Get("X-Volume-User"); user != "" {
-			log.Printf("kbmcp: request from user=%q scopes=%q", user, r.Header.Get("X-Volume-Scopes"))
+			// Carry the session id (truncated as in sessionTag) so these lines
+			// line up with the MCP method lines from the same client; a GET that
+			// opens a notification stream logs nothing else at all.
+			sid := r.Header.Get("Mcp-Session-Id")
+			if len(sid) > 8 {
+				sid = sid[:8]
+			}
+			if sid == "" {
+				sid = "-"
+			}
+			log.Printf("kbmcp: [%s] %s %s user=%q scopes=%q", sid, r.Method, r.URL.Path,
+				user, r.Header.Get("X-Volume-Scopes"))
 		}
 		next.ServeHTTP(w, r)
 	})

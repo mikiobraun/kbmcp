@@ -333,13 +333,47 @@ The server logs every request to stderr: each tool call with its name, a
 error message), and how long it took. Other methods (`initialize`, `tools/list`)
 are logged briefly.
 
+Every line is prefixed with the session id (first 8 characters) and, when the
+client announced one, its name. Several clients typically share a vault — agents
+alongside an editor — and behind the gateway they all arrive as the same user,
+so the session is what tells them apart. A client using the modern
+`server/discover` handshake sends no name and is identified by session alone.
+
 ```
-tool search {"query":"alpha"} -> ok (2ms)
-tool edit_file {"path":"notes.md","old_string":"foo",...} -> FAILED: old_string not found in notes.md (1ms)
+kbmcp: [-] POST / user="mikio" scopes="read write"
+[2O2XS7X5 editor-spa] initialize (0s)
+[2O2XS7X5 editor-spa] initialized; sent tools/list_changed
+[2O2XS7X5 editor-spa] tools/list (0s)
+[2O2XS7X5 editor-spa] tool search {"substring":"alpha"} -> ok (2ms)
+[2O2XS7X5 editor-spa] tool edit_file {"path":"notes.md","old_string":"foo",...} -> FAILED: old_string not found in notes.md (1ms)
 ```
+
+The gateway line carries the same id, so HTTP-level and MCP-level lines for one
+client line up; `[-]` is a request made before a session exists, which is the
+`initialize` or `server/discover` itself.
 
 Watch them live by running the server in a terminal, or — once it runs under
 systemd — with `journalctl -fu kbmcp`.
+
+## What a client is told at connect
+
+Beyond the per-tool descriptions, the server returns a short `instructions`
+string on both handshakes (`initialize` and `server/discover`). It points the
+client at `README.md` in the **served folder** — the vault's own README, which
+describes how that particular knowledge base is organised — and covers the
+cross-tool things no single tool description can: which tool answers which kind
+of question, that the read tools take lists so results should be pulled in one
+call, and that history is queryable because every write is a commit.
+
+It is spent from every client's context on every connection, so it is kept
+short and deliberately does not restate the tool descriptions.
+
+The text lives in `INSTRUCTIONS.md`, read once at startup, so whoever curates a
+vault can edit it as prose without a rebuild. Point `-instructions` elsewhere to
+serve a different file — useful when one binary serves more than one vault, since
+the text describes a *particular* knowledge base. A missing file is not an error:
+the server simply sends no instructions. Edits take effect on restart, and a
+connected client will not see them until it reconnects.
 
 ## Wire it into a client
 

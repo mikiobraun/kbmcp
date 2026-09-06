@@ -19,6 +19,37 @@ const (
 	payloadPreview = 20
 )
 
+// sessionTag identifies which client a log line belongs to. Several clients
+// share one vault — agents plus the editor SPA, all arriving as the same
+// gateway user — so user= alone cannot tell them apart. The session id can:
+// it is per-connection and stable for that connection's lifetime. Eight
+// characters is plenty to distinguish a handful of concurrent clients while
+// staying readable.
+//
+// The client's own name is only known on the legacy handshake, where it comes
+// in with initialize. A client using the modern server/discover sends no
+// ClientInfo at all, so it is identified by session alone.
+func sessionTag(req mcp.Request) string {
+	sess := req.GetSession()
+	if sess == nil {
+		return ""
+	}
+	id := sess.ID()
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	name := ""
+	if ss, ok := sess.(*mcp.ServerSession); ok {
+		if p := ss.InitializeParams(); p != nil && p.ClientInfo != nil {
+			name = " " + p.ClientInfo.Name
+		}
+	}
+	if id == "" && name == "" {
+		return "" // stdio: a single unnamed session, nothing to disambiguate
+	}
+	return "[" + id + name + "] "
+}
+
 // loggingMiddleware logs every incoming request. Tool calls are logged with
 // their name, a summary of their arguments (path + payload preview), timing, and
 // whether they failed — both protocol errors and tool-level (IsError) errors.
@@ -27,12 +58,13 @@ func loggingMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 		start := time.Now()
 		res, err := next(ctx, method, req)
 		elapsed := time.Since(start).Round(time.Millisecond)
+		who := sessionTag(req)
 
 		if method != "tools/call" {
 			if err != nil {
-				log.Printf("%s -> ERROR: %v (%s)", method, err, elapsed)
+				log.Printf("%s%s -> ERROR: %v (%s)", who, method, err, elapsed)
 			} else {
-				log.Printf("%s (%s)", method, elapsed)
+				log.Printf("%s%s (%s)", who, method, elapsed)
 			}
 			return res, err
 		}
@@ -46,9 +78,9 @@ func loggingMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 		}
 		switch {
 		case err != nil:
-			log.Printf("tool %s %s -> PROTOCOL ERROR: %v (%s)", name, args, err, elapsed)
+			log.Printf("%stool %s %s -> PROTOCOL ERROR: %v (%s)", who, name, args, err, elapsed)
 		case isToolError(res):
-			log.Printf("tool %s %s -> FAILED: %s (%s)", name, args, toolErrorText(res), elapsed)
+			log.Printf("%stool %s %s -> FAILED: %s (%s)", who, name, args, toolErrorText(res), elapsed)
 		default:
 			extra := ""
 			if isReadTool(name) {
@@ -56,7 +88,7 @@ func loggingMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 					extra = " read=" + pv
 				}
 			}
-			log.Printf("tool %s %s%s -> ok (%s)", name, args, extra, elapsed)
+			log.Printf("%stool %s %s%s -> ok (%s)", who, name, args, extra, elapsed)
 		}
 		return res, err
 	}

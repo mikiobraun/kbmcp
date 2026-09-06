@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -9,6 +11,43 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// A vault that carries no INSTRUCTIONS.md is still a working server: the file
+// is optional, and its absence must not be an error or a startup failure.
+func TestMissingInstructionsFileIsNotAnError(t *testing.T) {
+	if got := loadInstructions(filepath.Join(t.TempDir(), "nope.md")); got != "" {
+		t.Errorf("expected no instructions, got %q", got)
+	}
+}
+
+// When the file is there, its text reaches the client verbatim on connect —
+// it is prose curated for that vault, so nothing may reformat or trim it.
+func TestInstructionsReachTheClientVerbatim(t *testing.T) {
+	newRepo(t)
+	want := "Read README.md first.\n\n- `search` matches note text\n"
+	path := filepath.Join(t.TempDir(), "INSTRUCTIONS.md")
+	if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	serverT, clientT := mcp.NewInMemoryTransports()
+	ss, err := newServer(loadInstructions(path)).Connect(ctx, serverT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "probe", Version: "0"}, nil).
+		Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+
+	if got := cs.InitializeResult().Instructions; got != want {
+		t.Errorf("instructions altered in transit:\n got %q\nwant %q", got, want)
+	}
+}
 
 // A client that connects gets told the tool list may be stale, so one that
 // cached the list before a restart refetches instead of calling a parameter
@@ -29,7 +68,7 @@ func TestNewSessionIsToldToRefetchTools(t *testing.T) {
 
 	ctx := context.Background()
 	serverT, clientT := mcp.NewInMemoryTransports()
-	ss, err := newServer().Connect(ctx, serverT, nil)
+	ss, err := newServer("").Connect(ctx, serverT, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +94,7 @@ func TestRefetchAfterNudgeReturnsCurrentSchema(t *testing.T) {
 
 	ctx := context.Background()
 	serverT, clientT := mcp.NewInMemoryTransports()
-	ss, err := newServer().Connect(ctx, serverT, nil)
+	ss, err := newServer("").Connect(ctx, serverT, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

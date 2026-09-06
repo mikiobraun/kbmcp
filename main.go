@@ -4,18 +4,41 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// loadInstructions reads the text handed to every client once at connect — it
+// rides on both handshakes, initialize and server/discover. It lives in a file
+// rather than in this source so it can be edited as prose, by whoever curates
+// the vault, without a rebuild.
+//
+// A missing file is not an error: the server is fully usable without it, and a
+// deployment that has nothing to explain should not have to carry an empty file.
+// Any other read failure is worth a line, since it means the file is there and
+// was meant to be used.
+func loadInstructions(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("kbmcp: instructions %s: %v", path, err)
+		}
+		return ""
+	}
+	return string(b)
+}
+
 func main() {
 	httpAddr := flag.String("http", "", "serve over HTTP on this address instead of stdio; host defaults to loopback (e.g. :8070, or 100.x.y.z:8070 to bind a Tailscale IP for a remote gateway)")
 	token := flag.String("token", "", "bearer token for HTTP mode (default: $KBMCP_TOKEN, or KBMCP_TOKEN in the env file)")
 	envPath := flag.String("env", ".env", "env file loaded at startup (KEY=VALUE lines); real env vars win; a missing file is ignored")
+	instrPath := flag.String("instructions", "INSTRUCTIONS.md", "markdown file describing this server to connecting clients, sent once at connect; a missing file is ignored")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: %s [flags] [folder]\n\n"+
 			"Serves [folder] (default: current directory) over MCP.\n"+
@@ -45,7 +68,7 @@ func main() {
 	}
 	log.Printf("kbmcp: serving %s", root)
 
-	server := newServer()
+	server := newServer(loadInstructions(*instrPath))
 
 	if *httpAddr != "" {
 		if err := serveHTTP(server, *httpAddr, *token); err != nil {
@@ -62,13 +85,14 @@ func main() {
 // newServer builds the MCP server with every tool registered. Split out of
 // main so a test can drive the real wiring — in particular the tool-list
 // nudge, whose whole job happens at session setup.
-func newServer() *mcp.Server {
+func newServer(instructions string) *mcp.Server {
 	// Armed after the tools are registered; see the nudge below. A session
 	// cannot reach either trigger before then, since serving starts later, but
 	// the nil check keeps that ordering from being load-bearing.
 	var nudgeToolList func()
 
-	server := mcp.NewServer(&mcp.Implementation{Name: "kbmcp", Version: "0.1.0"}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: "kbmcp", Version: "0.1.0"},
+		&mcp.ServerOptions{Instructions: instructions})
 	server.AddReceivingMiddleware(loggingMiddleware)
 
 	// Fire the nudge at whichever point this client became able to receive
@@ -89,10 +113,12 @@ func newServer() *mcp.Server {
 			// nudgeToolList only schedules, it never blocks.
 			if method == "subscriptions/listen" && nudgeToolList != nil {
 				nudgeToolList()
+				log.Printf("%ssubscribed; sent tools/list_changed", sessionTag(req))
 			}
 			res, err := next(ctx, method, req)
 			if method == "notifications/initialized" && err == nil && nudgeToolList != nil {
 				nudgeToolList()
+				log.Printf("%sinitialized; sent tools/list_changed", sessionTag(req))
 			}
 			return res, err
 		}
@@ -203,10 +229,7 @@ func newServer() *mcp.Server {
 	//
 	// Because no session survives a restart, once-per-session is already
 	// once-per-restart-per-client: there is no "did we notify yet" state to keep.
-	nudgeToolList = func() {
-		mcp.AddTool(server, listFilesTool, ListFiles)
-		log.Print("kbmcp: client connected; sent tools/list_changed")
-	}
+	nudgeToolList = func() { mcp.AddTool(server, listFilesTool, ListFiles) }
 
 	return server
 }
