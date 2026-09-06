@@ -5,9 +5,16 @@ package main
 // LanceDB-backed semantic search.
 //
 // ripgrep is used deliberately: it is fast, its regex engine is linear-time (no
-// catastrophic backtracking on a hostile pattern), and by default it skips
-// hidden files, .git, and gitignored paths — matching the vault's own dotfile
-// filtering for free.
+// catastrophic backtracking on a hostile pattern), and it skips hidden files and
+// .git by default — matching the vault's own dotfile filtering for free.
+//
+// Ignore files are the exception we opt out of (--no-ignore): whether a path is
+// gitignored, or listed in an .ignore, is not the decision about whether it is
+// in the vault. A vault may keep real content out of git deliberately — an
+// intake folder that can be re-fetched, say — and that content is still content.
+// The file listing shows those files, so a search that skipped them would make
+// the vault answer differently depending on which door you came through. What is
+// invisible is decided in one place, isHidden, and dotfiles remain so.
 
 import (
 	"bufio"
@@ -133,7 +140,9 @@ func searchCore(ctx context.Context, in SearchInput) (SearchOutput, error) {
 		return SearchOutput{}, fmt.Errorf("search requires ripgrep (rg), which is not installed")
 	}
 
-	args := []string{"--json", "--line-number"}
+	// --no-ignore: honour no ignore file at all (see the file header). It does
+	// not imply --hidden, so dotfiles and .git stay out on ripgrep's own rule.
+	args := []string{"--json", "--line-number", "--no-ignore"}
 	if hasSub {
 		args = append(args, "--fixed-strings")
 	}

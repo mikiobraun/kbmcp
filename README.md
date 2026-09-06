@@ -37,10 +37,35 @@ and dot-directories such as `.git` — are excluded from every listing, search,
 and the link graph, and pagination cursors (`from`/`next_from`) let an agent page
 a large vault without pulling the whole tree at once.
 
-Wiki-links use Obsidian-style resolution: `[[note-name]]` matches the file named
-`note-name.md` anywhere in the vault (by basename, case-insensitive); an
-`|alias` or `#heading` suffix is ignored, and `[[...]]` inside code spans or
-fenced code blocks is not treated as a link.
+### Wiki-link resolution
+
+Whether a `[[target]]` is a *name* or a *path* is decided by whether it contains
+a slash. `.md` is optional throughout, and matching is case-insensitive.
+
+| written | resolves as |
+|---|---|
+| `[[README]]` | a **name**: the linking note's own folder first, then by basename anywhere in the vault |
+| `[[mails/invoice-x]]` | a **vault path**, from the root |
+| `[[/mails/invoice-x]]` | the same — a leading `/` is optional sugar for "from the root" |
+| `[[./README]]` | explicitly the linking note's folder |
+| `[[note\|Alias]]` | resolves `note`, displays "Alias" |
+
+The name form tries the linking note's folder first so that a per-folder
+convention works: a `[[README]]` inside `tax/` means `tax/README.md`, not some
+other folder's. If the name is not a sibling, it falls back to a vault-wide
+basename lookup — which is what keeps a link like `[[shared-epistemic-medium]]`
+working from anywhere, and working still after the note is moved. A name that
+matches several notes resolves to nothing and reports the candidates, rather
+than silently picking one; with a per-folder `README.md` convention that case is
+common, and guessing would usually be wrong.
+
+A target containing a `..` segment does not resolve, and says so. It is the most
+move-brittle form there is, and the only one that could point outside the vault —
+declining it is cheaper than guarding it.
+
+An `|alias` or `#heading` suffix is stripped before resolution (`^block`
+references likewise), and `[[...]]` inside code spans or fenced code blocks is
+not treated as a link. Transclusion (`![[note]]`) is not supported.
 
 The write tools return a unified-style diff of the change, and accept
 `dry_run: true` to preview that diff without writing or committing anything. For
@@ -75,8 +100,18 @@ something else and quietly return the wrong lines. A field called `substring`
 cannot be filled in wrongly.
 
 Both require their binary on `PATH` (`rg`, `fd`), confine the scope inside the
-served folder, do not follow symlinks, and skip hidden files, `.git`, and
-gitignored paths by default.
+served folder, do not follow symlinks, and skip hidden files and `.git`.
+
+Ignore files are not consulted at all (`--no-ignore`): neither `.gitignore`,
+`.ignore`, `.rgignore`/`.fdignore`, nor your global gitignore decides what is in
+the vault. A vault may keep real content out of git on purpose — an intake
+folder that can be re-fetched, say — and that content is still content. The file
+listing shows those files either way, so skipping them here would make the vault
+answer differently depending on which door you came through.
+
+That leaves exactly one rule about what is invisible — a leading dot — which
+`rg` and `fd` apply themselves, and `isHidden` applies to every path kbmcp walks
+on its own.
 
 ## Restarts and stale tool lists
 
@@ -241,6 +276,8 @@ doesn't speak MCP:
 | `PUT` | `/files/<path>` | raw file content | Create or overwrite the file, then commit it. Returns `201`/`200`, an `ETag`, and a small JSON body. |
 | `GET` | `/history` | — | Recent commits as JSON (`{"commits": [...]}`), mirroring the `history` tool. Optional `?max=&path=&since=`. |
 | `GET` | `/search` | — | Content search as JSON (`{"matches": [{"path","line","text"}], "truncated": bool}`), sharing the `search` tool's core. Requires `?substring=`; optional `?max=`. |
+| `GET` | `/find` | — | Filename search as JSON (`{"paths": [...], "truncated": bool}`), sharing the `find_files` tool's core. Requires `?substring=`; optional `?max=`. |
+| `GET` | `/links` | — | One note's wiki-links and what each resolves to (`{"path", "links": [{"target","resolved","broken","reason","candidates","line"}]}`), sharing the `outgoing_links` tool's core. Requires `?path=`. |
 
 `/search` exposes substring matching only, and names the parameter for the mode
 rather than calling it `q`: a single query parameter whose meaning depends on a
@@ -248,6 +285,11 @@ flag elsewhere is exactly what the `search` tool's field naming exists to
 prevent. Adding `?regex=` later therefore needs no migration and no flag — the
 name says which it is. A missing or blank `substring` is a `400`, not a search
 for everything.
+
+`/find` takes the same parameter for the same reason, though `FindInput` itself
+has no substring mode: the value is regex-escaped before it reaches `fd`, which
+matches unanchored — so a typed `meeting.md` is a literal substring of the
+filename rather than a pattern whose `.` matches any character.
 
 `PUT` carries commit metadata in the query string, so the body stays pure
 content: `?message=…` (**required**) plus optional `?author_name=…&author_email=…`.

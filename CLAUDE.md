@@ -89,7 +89,8 @@ fallback that never overrides the real environment.
   The existing code is densely commented in that style; match it.
 - README.md is user-facing documentation and is kept in sync with behavior
   changes — update it in the same change, not later.
-- `changes.local` (gitignored) is the pending-work log: append self-contained
-  entries there for changes that will be committed later.
+- BACKLOG.md holds deliberate not-yet-done work, with the reasoning that led
+  there. Add an entry when a decision would otherwise have to be re-derived;
+  delete it when the work lands.
 - `dev.yaml` describes this service to the auth gateway; it is not read by this
   binary.

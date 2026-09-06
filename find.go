@@ -2,8 +2,12 @@ package main
 
 // find_files: name-based discovery, backed by fd. A separate tool from search
 // on purpose — its result shape is a list of paths, not content matches. Like
-// ripgrep, fd skips hidden files, .git, and gitignored paths by default, and
-// does not follow symlinks unless asked, so the scope stays inside the vault.
+// ripgrep, fd skips hidden files and .git by default, and does not follow
+// symlinks unless asked, so the scope stays inside the vault.
+//
+// Ignore files are not consulted (--no-ignore), matching search: whether a path
+// is gitignored, or listed in an .ignore, is not the decision about whether it
+// is in the vault. The file listing shows it either way.
 
 import (
 	"bufio"
@@ -47,18 +51,71 @@ func fdBinary() (string, error) {
 }
 
 func FindFiles(ctx context.Context, req *mcp.CallToolRequest, in FindInput) (*mcp.CallToolResult, FindOutput, error) {
+	out, err := findCore(ctx, in)
+	if err != nil {
+		return nil, FindOutput{}, err
+	}
+
+	var b strings.Builder
+	for _, p := range out.Paths {
+		b.WriteString(p)
+		b.WriteByte('\n')
+	}
+	if b.Len() == 0 {
+		b.WriteString("(no matches)\n")
+	}
+	if out.Truncated {
+		fmt.Fprintf(&b, "... (%d shown; more remain — call again with from=%q)\n", len(out.Paths), out.NextFrom)
+	}
+	return textResult("%s", b.String()), out, nil
+}
+
+// findCore does the finding. Like searchCore it mentions no MCP types, so the
+// REST handler calls it directly rather than fabricating a tool request.
+func findCore(ctx context.Context, in FindInput) (FindOutput, error) {
+	all, err := fdPaths(ctx, in)
+	if err != nil {
+		return FindOutput{}, err
+	}
+
+	// Take the page strictly after the cursor.
+	start := sort.Search(len(all), func(i int) bool { return all[i] > in.From })
+	page := all[start:]
+
+	limit := in.MaxResults
+	if limit <= 0 {
+		limit = defaultListMax
+	}
+	if limit > maxListMax {
+		limit = maxListMax
+	}
+	out := FindOutput{}
+	if len(page) > limit {
+		out.Truncated = true
+		page = page[:limit]
+		out.NextFrom = page[len(page)-1]
+	}
+	out.Paths = page
+
+	return out, nil
+}
+
+// fdPaths runs fd and returns every match, sorted and uncapped. findCore pages
+// and caps on top of it; the wiki-link note index needs all of them, and paging
+// there would re-run fd once per page.
+func fdPaths(ctx context.Context, in FindInput) ([]string, error) {
 	hasRe := strings.TrimSpace(in.Regex) != ""
 	hasGlob := strings.TrimSpace(in.Glob) != ""
 	if hasRe && hasGlob {
-		return nil, FindOutput{}, fmt.Errorf("pass at most one of 'regex' or 'glob', not both: 'regex' is a regular expression matched against the filename (metacharacters like [ ] . * ? are special); 'glob' is a shell-style filename pattern such as '*.md'. Passing neither matches everything under the scope")
+		return nil, fmt.Errorf("pass at most one of 'regex' or 'glob', not both: 'regex' is a regular expression matched against the filename (metacharacters like [ ] . * ? are special); 'glob' is a shell-style filename pattern such as '*.md'. Passing neither matches everything under the scope")
 	}
 	scope, err := resolve(in.Path)
 	if err != nil {
-		return nil, FindOutput{}, err
+		return nil, err
 	}
 	fd, err := fdBinary()
 	if err != nil {
-		return nil, FindOutput{}, err
+		return nil, err
 	}
 
 	typ := "f"
@@ -68,13 +125,15 @@ func FindFiles(ctx context.Context, req *mcp.CallToolRequest, in FindInput) (*mc
 	case "dir", "directory", "d":
 		typ = "d"
 	default:
-		return nil, FindOutput{}, fmt.Errorf("type must be 'file' or 'dir', got %q", in.Type)
+		return nil, fmt.Errorf("type must be 'file' or 'dir', got %q", in.Type)
 	}
 
 	// Run from root with a relative --search-path so paths come back relative to
 	// root. The flag form (not a positional) keeps the scope from being mistaken
 	// for the pattern.
-	args := []string{"--color=never", "--type", typ, "--search-path", relPath(scope)}
+	// --no-ignore matches search: no ignore file decides what is in the vault.
+	// It does not imply --hidden, so dotfiles and .git stay out on fd's own rule.
+	args := []string{"--color=never", "--no-ignore", "--type", typ, "--search-path", relPath(scope)}
 	// Use the raw value, not the trimmed one — the trims above only tested
 	// presence, and surrounding space can be part of a filename pattern.
 	pattern := in.Regex
@@ -92,10 +151,10 @@ func FindFiles(ctx context.Context, req *mcp.CallToolRequest, in FindInput) (*mc
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, FindOutput{}, err
+		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, FindOutput{}, err
+		return nil, err
 	}
 
 	var all []string
@@ -115,39 +174,9 @@ func FindFiles(ctx context.Context, req *mcp.CallToolRequest, in FindInput) (*mc
 		if msg == "" {
 			msg = werr.Error()
 		}
-		return nil, FindOutput{}, fmt.Errorf("fd: %s", msg)
+		return nil, fmt.Errorf("fd: %s", msg)
 	}
 
-	// Sort for a stable order, then take the page strictly after the cursor.
-	sort.Strings(all)
-	start := sort.Search(len(all), func(i int) bool { return all[i] > in.From })
-	page := all[start:]
-
-	limit := in.MaxResults
-	if limit <= 0 {
-		limit = defaultListMax
-	}
-	if limit > maxListMax {
-		limit = maxListMax
-	}
-	out := FindOutput{}
-	if len(page) > limit {
-		out.Truncated = true
-		page = page[:limit]
-		out.NextFrom = page[len(page)-1]
-	}
-	out.Paths = page
-
-	var b strings.Builder
-	for _, p := range page {
-		b.WriteString(p)
-		b.WriteByte('\n')
-	}
-	if b.Len() == 0 {
-		b.WriteString("(no matches)\n")
-	}
-	if out.Truncated {
-		fmt.Fprintf(&b, "... (%d shown; more remain — call again with from=%q)\n", len(page), out.NextFrom)
-	}
-	return textResult("%s", b.String()), out, nil
+	sort.Strings(all) // stable order, and what the cursor paging assumes
+	return all, nil
 }

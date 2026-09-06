@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -180,6 +181,66 @@ func restSearch(w http.ResponseWriter, r *http.Request) {
 	// A JSON null would make "no matches" awkward for every caller.
 	if out.Matches == nil {
 		out.Matches = []Match{}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(out)
+}
+
+// restFind exposes filename search: GET /find?substring=…&max=…, returning
+// {paths:[…], truncated}.
+//
+// FindInput has no substring mode, only regex and glob — but a filename typed
+// into a search box is a literal, and "meeting.md" must not have its '.' read as
+// "any character". So the pattern is regex-escaped here: fd matches unanchored,
+// which makes an escaped literal exactly a substring match on the name, with the
+// escaping done server-side where it is testable. ?regex= and ?glob= stay free
+// to be added later meaning precisely what they say.
+func restFind(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	sub := q.Get("substring")
+	if strings.TrimSpace(sub) == "" {
+		http.Error(w, "missing required query parameter: substring", http.StatusBadRequest)
+		return
+	}
+	max := 0
+	if s := q.Get("max"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil {
+			max = n
+		}
+	}
+
+	out, err := findCore(r.Context(), FindInput{Regex: regexp.QuoteMeta(sub), MaxResults: max})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if out.Paths == nil {
+		out.Paths = []string{}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(out)
+}
+
+// restLinks returns one note's wiki-links and what each resolves to:
+// GET /links?path=<note> -> {path, links:[{target,resolved,broken,reason,candidates,line}]}.
+//
+// It shares outgoingCore with the tool, so a link resolves the same way for a
+// browser as for an agent. That path costs one file read and a stat per link —
+// no graph, and no other note is read — which is what makes it reasonable to
+// call every time a note is opened.
+func restLinks(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if strings.TrimSpace(path) == "" {
+		http.Error(w, "missing required query parameter: path", http.StatusBadRequest)
+		return
+	}
+	out, err := outgoingCore(r.Context(), path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if out.Links == nil {
+		out.Links = []OutLink{}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(out)
