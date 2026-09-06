@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -65,7 +66,14 @@ func logIdentity(next http.Handler) http.Handler {
 				sid = sid[:8]
 			}
 			if sid == "" {
-				sid = "-"
+				// A REST caller has no MCP session, so identify it by address
+				// instead — and by the name it claims in X-Client-Id, when it
+				// sends one. That name is self-declared: a label for reading
+				// logs, never an identity (user= is the authenticated part).
+				sid = "REST:" + clientIP(r)
+				if tag := clientTag(r.Header.Get("X-Client-Id")); tag != "" {
+					sid += ":" + tag
+				}
 			}
 			log.Printf("kbmcp: [%s] %s %s user=%q scopes=%q", sid, r.Method, r.URL.Path,
 				user, r.Header.Get("X-Volume-Scopes"))
@@ -100,6 +108,24 @@ func requireToken(token string, next http.Handler) http.Handler {
 
 // clientIP is the best-effort caller address for logs: the gateway sets
 // X-Forwarded-For with the real client; otherwise it's the direct peer.
+// clientTag sanitises the self-declared X-Client-Id before it reaches a log
+// line. The value is caller-controlled, so it is capped and stripped of
+// anything that could forge a line (newlines, control characters) or blur the
+// field separator.
+func clientTag(v string) string {
+	const maxLen = 32
+	var b strings.Builder
+	for _, c := range v {
+		if c > ' ' && c < 127 && c != ':' && c != '"' {
+			b.WriteRune(c)
+		}
+		if b.Len() >= maxLen {
+			break
+		}
+	}
+	return b.String()
+}
+
 func clientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		return xff
