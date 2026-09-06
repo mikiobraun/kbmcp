@@ -151,6 +151,40 @@ func restHistory(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"commits": commits})
 }
 
+// restSearch exposes content search: GET /search?substring=…&max=…, returning
+// the search tool's own output ({matches:[{path,line,text}], truncated}).
+//
+// Only substring mode is exposed. The parameter is named for the mode, as the
+// tool's field is, so adding ?regex= later says what it means — rather than
+// having one "q" whose interpretation depends on a flag somewhere else, which
+// is the failure SearchInput's naming was designed to prevent.
+func restSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	sub := q.Get("substring")
+	if strings.TrimSpace(sub) == "" {
+		http.Error(w, "missing required query parameter: substring", http.StatusBadRequest)
+		return
+	}
+	max := 0
+	if s := q.Get("max"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil {
+			max = n
+		}
+	}
+
+	out, err := searchCore(r.Context(), SearchInput{Substring: sub, MaxResults: max})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// A JSON null would make "no matches" awkward for every caller.
+	if out.Matches == nil {
+		out.Matches = []Match{}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(out)
+}
+
 // restListDir returns a JSON listing of a directory's immediate entries.
 func restListDir(w http.ResponseWriter, dir string) {
 	des, err := os.ReadDir(dir)

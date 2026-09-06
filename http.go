@@ -42,6 +42,7 @@ func serveHTTP(server *mcp.Server, addr, token string) error {
 	mux.HandleFunc("GET /files/", restGet)
 	mux.HandleFunc("PUT /files/", restPut)
 	mux.HandleFunc("GET /history", restHistory)
+	mux.HandleFunc("GET /search", restSearch)
 
 	// Default to loopback when only a port was given; the gateway is the sole
 	// ingress and the token proves the caller is the gateway. Bind a routable

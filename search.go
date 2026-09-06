@@ -72,13 +72,49 @@ type rgEvent struct {
 // file, line number, and the matching line. Results are capped; Truncated says
 // whether more matches existed beyond the cap.
 func Search(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
+	out, err := searchCore(ctx, in)
+	if err != nil {
+		return nil, SearchOutput{}, err
+	}
+
+	var b strings.Builder
+	for _, m := range out.Matches {
+		fmt.Fprintf(&b, "%s:%d: %s\n", m.Path, m.Line, m.Text)
+	}
+	if b.Len() == 0 {
+		b.WriteString("(no matches)\n")
+	}
+	if out.Truncated {
+		fmt.Fprintf(&b, "... (truncated at %d matches)\n", searchLimit(in.MaxResults))
+	}
+	return textResult("%s", b.String()), out, nil
+}
+
+// searchLimit applies the default and the cap to a requested result count. It
+// is shared so the tool's "truncated at N" line cannot disagree with the cap the
+// search actually applied.
+func searchLimit(n int) int {
+	if n <= 0 {
+		return defaultSearchMax
+	}
+	if n > maxSearchMax {
+		return maxSearchMax
+	}
+	return n
+}
+
+// searchCore does the searching. It mentions no MCP types, so the REST handler
+// calls it directly instead of fabricating a tool request — which keeps the two
+// entry points from drifting apart, as restHistory and the history tool share
+// commitLog.
+func searchCore(ctx context.Context, in SearchInput) (SearchOutput, error) {
 	hasRe := strings.TrimSpace(in.Regex) != ""
 	hasSub := strings.TrimSpace(in.Substring) != ""
 	switch {
 	case hasRe && hasSub:
-		return nil, SearchOutput{}, fmt.Errorf("pass exactly one of 'regex' or 'substring', not both: %s", modeHelp)
+		return SearchOutput{}, fmt.Errorf("pass exactly one of 'regex' or 'substring', not both: %s", modeHelp)
 	case !hasRe && !hasSub:
-		return nil, SearchOutput{}, fmt.Errorf("pass exactly one of 'regex' or 'substring': %s", modeHelp)
+		return SearchOutput{}, fmt.Errorf("pass exactly one of 'regex' or 'substring': %s", modeHelp)
 	}
 	// Use the raw value, not the trimmed one — leading and trailing whitespace
 	// is a meaningful part of a pattern; the trim above only tested presence.
@@ -88,19 +124,13 @@ func Search(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp
 	}
 	scope, err := resolve(in.Path)
 	if err != nil {
-		return nil, SearchOutput{}, err
+		return SearchOutput{}, err
 	}
-	limit := in.MaxResults
-	if limit <= 0 {
-		limit = defaultSearchMax
-	}
-	if limit > maxSearchMax {
-		limit = maxSearchMax
-	}
+	limit := searchLimit(in.MaxResults)
 
 	rg, err := exec.LookPath("rg")
 	if err != nil {
-		return nil, SearchOutput{}, fmt.Errorf("search requires ripgrep (rg), which is not installed")
+		return SearchOutput{}, fmt.Errorf("search requires ripgrep (rg), which is not installed")
 	}
 
 	args := []string{"--json", "--line-number"}
@@ -128,10 +158,10 @@ func Search(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, SearchOutput{}, err
+		return SearchOutput{}, err
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, SearchOutput{}, err
+		return SearchOutput{}, err
 	}
 
 	var out SearchOutput
@@ -164,19 +194,9 @@ func Search(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp
 			if msg == "" {
 				msg = werr.Error()
 			}
-			return nil, SearchOutput{}, fmt.Errorf("ripgrep: %s", msg)
+			return SearchOutput{}, fmt.Errorf("ripgrep: %s", msg)
 		}
 	}
 
-	var b strings.Builder
-	for _, m := range out.Matches {
-		fmt.Fprintf(&b, "%s:%d: %s\n", m.Path, m.Line, m.Text)
-	}
-	if b.Len() == 0 {
-		b.WriteString("(no matches)\n")
-	}
-	if out.Truncated {
-		fmt.Fprintf(&b, "... (truncated at %d matches)\n", limit)
-	}
-	return textResult("%s", b.String()), out, nil
+	return out, nil
 }

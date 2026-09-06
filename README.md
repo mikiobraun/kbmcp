@@ -240,6 +240,14 @@ doesn't speak MCP:
 | `GET` | `/files/<path>` | — | A file's raw content (markdown as `text/markdown`), or a JSON listing for a directory. |
 | `PUT` | `/files/<path>` | raw file content | Create or overwrite the file, then commit it. Returns `201`/`200`, an `ETag`, and a small JSON body. |
 | `GET` | `/history` | — | Recent commits as JSON (`{"commits": [...]}`), mirroring the `history` tool. Optional `?max=&path=&since=`. |
+| `GET` | `/search` | — | Content search as JSON (`{"matches": [{"path","line","text"}], "truncated": bool}`), sharing the `search` tool's core. Requires `?substring=`; optional `?max=`. |
+
+`/search` exposes substring matching only, and names the parameter for the mode
+rather than calling it `q`: a single query parameter whose meaning depends on a
+flag elsewhere is exactly what the `search` tool's field naming exists to
+prevent. Adding `?regex=` later therefore needs no migration and no flag — the
+name says which it is. A missing or blank `substring` is a `400`, not a search
+for everything.
 
 `PUT` carries commit metadata in the query string, so the body stays pure
 content: `?message=…` (**required**) plus optional `?author_name=…&author_email=…`.

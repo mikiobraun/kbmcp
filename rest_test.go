@@ -147,3 +147,87 @@ func TestRestHistory(t *testing.T) {
 		t.Errorf("commit missing hash/relative: %+v", body.Commits[0])
 	}
 }
+
+// GET /search returns substring matches with the line they were found on.
+func TestRestSearch(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"note.md":       "alpha\nbeta needle here\ngamma\n",
+		"sub/other.md":  "nothing\nneedle again\n",
+		"unrelated.txt": "no match in here\n",
+	}
+	for p, content := range files {
+		full := filepath.Join(dir, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := setRoot(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	restSearch(rec, httptest.NewRequest("GET", "/search?substring=needle", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out SearchOutput
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Matches) != 2 {
+		t.Fatalf("want 2 matches, got %d: %+v", len(out.Matches), out.Matches)
+	}
+	// Paths come back relative to root, and the matching line rides along so a
+	// caller can show a fragment without re-reading the file.
+	byPath := map[string]Match{}
+	for _, m := range out.Matches {
+		byPath[m.Path] = m
+	}
+	if m, ok := byPath["note.md"]; !ok || m.Line != 2 || m.Text != "beta needle here" {
+		t.Errorf("note.md match wrong: %+v", m)
+	}
+	if _, ok := byPath["sub/other.md"]; !ok {
+		t.Errorf("missing nested match, got %+v", out.Matches)
+	}
+
+	// A literal is literal: metacharacters match themselves rather than compiling.
+	rec = httptest.NewRecorder()
+	restSearch(rec, httptest.NewRequest("GET", "/search?substring=%5Bx%5D", nil)) // [x]
+	if rec.Code != 200 {
+		t.Fatalf("bracket search status %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Matches) != 0 {
+		t.Errorf("'[x]' should match nothing literally, got %+v", out.Matches)
+	}
+	// No matches serialises as [], not null.
+	if !strings.Contains(body, `"matches":[]`) {
+		t.Errorf("no-match body should carry an empty array: %s", body)
+	}
+
+	// max caps the results and says that it did.
+	rec = httptest.NewRecorder()
+	restSearch(rec, httptest.NewRequest("GET", "/search?substring=needle&max=1", nil))
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Matches) != 1 || !out.Truncated {
+		t.Errorf("max=1: got %d matches, truncated=%v", len(out.Matches), out.Truncated)
+	}
+
+	// A missing or blank pattern is a bad request, never a search for everything.
+	for _, q := range []string{"/search", "/search?substring=", "/search?substring=%20%20"} {
+		rec := httptest.NewRecorder()
+		restSearch(rec, httptest.NewRequest("GET", q, nil))
+		if rec.Code != 400 {
+			t.Errorf("%s: got %d, want 400", q, rec.Code)
+		}
+	}
+}
