@@ -21,14 +21,26 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// The matching mode lives in the name of the field that carries the pattern,
+// not in a separate flag. A single "query" field plus a mode flag put the mode
+// somewhere it was read once, at tool-list time, and forgotten by the time a
+// call was written — so a literal like a markdown checkbox silently compiled to
+// a valid but quite different regex and returned nothing. Naming the field
+// forces the choice at the call site: filling in "regex" prompts escaping, and
+// filling in "substring" cannot be wrong.
 type SearchInput struct {
-	Query      string `json:"query" jsonschema:"the pattern to search for; a regular expression unless fixed_strings is set"`
+	Regex      string `json:"regex,omitempty" jsonschema:"a regular expression matched against each line; metacharacters are special. Pass exactly one of regex or substring."`
+	Substring  string `json:"substring,omitempty" jsonschema:"a literal string to find anywhere in a line; regex metacharacters carry no special meaning. Pass exactly one of regex or substring."`
 	Path       string `json:"path,omitempty" jsonschema:"folder to scope the search to, relative to root; empty means the whole root"`
 	MaxResults int    `json:"max_results,omitempty" jsonschema:"maximum number of matches to return (default 100, capped at 1000)"`
-	Fixed      bool   `json:"fixed_strings,omitempty" jsonschema:"treat query as a literal string instead of a regular expression"`
-	Sensitive  bool   `json:"case_sensitive,omitempty" jsonschema:"match case-sensitively; default is smart case (case-insensitive unless the query contains an uppercase letter)"`
+	Sensitive  bool   `json:"case_sensitive,omitempty" jsonschema:"match case-sensitively; default is smart case (case-insensitive unless the pattern contains an uppercase letter)"`
 	Glob       string `json:"glob,omitempty" jsonschema:"restrict the search to files whose name matches this glob (e.g. '*.md'); prefix with '!' to exclude. Empty searches all files."`
 }
+
+// modeHelp explains the regex/substring split. It rides on the errors below
+// rather than only in the tool description because an error is read at the one
+// moment a caller has already guessed wrong and can still fix the next call.
+const modeHelp = "'regex' is a regular expression (metacharacters like [ ] . * ? + | ( ) are special); 'substring' is a literal string (they are not)"
 
 type Match struct {
 	Path string `json:"path"`
@@ -60,8 +72,19 @@ type rgEvent struct {
 // file, line number, and the matching line. Results are capped; Truncated says
 // whether more matches existed beyond the cap.
 func Search(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
-	if strings.TrimSpace(in.Query) == "" {
-		return nil, SearchOutput{}, fmt.Errorf("query must not be empty")
+	hasRe := strings.TrimSpace(in.Regex) != ""
+	hasSub := strings.TrimSpace(in.Substring) != ""
+	switch {
+	case hasRe && hasSub:
+		return nil, SearchOutput{}, fmt.Errorf("pass exactly one of 'regex' or 'substring', not both: %s", modeHelp)
+	case !hasRe && !hasSub:
+		return nil, SearchOutput{}, fmt.Errorf("pass exactly one of 'regex' or 'substring': %s", modeHelp)
+	}
+	// Use the raw value, not the trimmed one — leading and trailing whitespace
+	// is a meaningful part of a pattern; the trim above only tested presence.
+	pattern := in.Regex
+	if hasSub {
+		pattern = in.Substring
 	}
 	scope, err := resolve(in.Path)
 	if err != nil {
@@ -81,7 +104,7 @@ func Search(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp
 	}
 
 	args := []string{"--json", "--line-number"}
-	if in.Fixed {
+	if hasSub {
 		args = append(args, "--fixed-strings")
 	}
 	if in.Sensitive {
@@ -94,7 +117,7 @@ func Search(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp
 	}
 	// Confine ripgrep to the scope by running from root and passing the scope as
 	// a relative path, so match paths come back relative to root. "." is root.
-	args = append(args, "--", in.Query, relPath(scope))
+	args = append(args, "--", pattern, relPath(scope))
 
 	// Cancel ripgrep as soon as we have enough matches instead of draining it.
 	runCtx, cancel := context.WithCancel(ctx)

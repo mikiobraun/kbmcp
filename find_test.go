@@ -19,7 +19,7 @@ func TestFindGlob(t *testing.T) {
 	ctx := searchVault(t, map[string]string{
 		"a.md": "", "b.txt": "", "sub/c.md": "",
 	})
-	_, out, err := FindFiles(ctx, nil, FindInput{Glob: true, Pattern: "*.md"})
+	_, out, err := FindFiles(ctx, nil, FindInput{Glob: "*.md"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,42 @@ func TestFindConfinementAndBadRegex(t *testing.T) {
 			t.Errorf("path %q should be rejected", bad)
 		}
 	}
-	if _, _, err := FindFiles(ctx, nil, FindInput{Pattern: "("}); err == nil {
+	if _, _, err := FindFiles(ctx, nil, FindInput{Regex: "("}); err == nil {
 		t.Error("expected an error for an unterminated group")
+	}
+}
+
+// regex and glob are alternatives, not a pattern plus a modifier: naming both
+// is an error, naming neither still lists the scope.
+func TestFindRejectsBothModes(t *testing.T) {
+	requireFd(t)
+	ctx := searchVault(t, map[string]string{"a.md": "", "b.txt": ""})
+	_, _, err := FindFiles(ctx, nil, FindInput{Regex: `\.md$`, Glob: "*.md"})
+	if err == nil {
+		t.Fatal("expected an error when both regex and glob are given")
+	}
+	if !strings.Contains(err.Error(), "regex") || !strings.Contains(err.Error(), "glob") {
+		t.Errorf("error should name both modes, got: %v", err)
+	}
+	// Neither: everything under the scope.
+	_, out, err := FindFiles(ctx, nil, FindInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(out.Paths) != fmt.Sprint([]string{"a.md", "b.txt"}) {
+		t.Errorf("no pattern should list everything, got %v", out.Paths)
+	}
+}
+
+// A regex matches against the filename.
+func TestFindRegex(t *testing.T) {
+	requireFd(t)
+	ctx := searchVault(t, map[string]string{"note.md": "", "b.txt": "", "sub/other.md": ""})
+	_, out, err := FindFiles(ctx, nil, FindInput{Regex: `^note\.`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(out.Paths) != fmt.Sprint([]string{"note.md"}) {
+		t.Errorf("regex ^note\\.: got %v", out.Paths)
 	}
 }

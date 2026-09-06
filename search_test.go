@@ -51,7 +51,7 @@ func TestSearchSmartCase(t *testing.T) {
 		"a.md": "The Meeting Notes\n",
 		"b.md": "no match here\n",
 	})
-	_, out, err := Search(ctx, nil, SearchInput{Query: "meeting"})
+	_, out, err := Search(ctx, nil, SearchInput{Substring: "meeting"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestSearchSmartCase(t *testing.T) {
 func TestSearchCaseSensitive(t *testing.T) {
 	requireRg(t)
 	ctx := searchVault(t, map[string]string{"a.md": "meeting notes\n"})
-	_, out, err := Search(ctx, nil, SearchInput{Query: "Meeting", Sensitive: true})
+	_, out, err := Search(ctx, nil, SearchInput{Substring: "Meeting", Sensitive: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,28 +73,72 @@ func TestSearchCaseSensitive(t *testing.T) {
 	}
 }
 
-// The query is a regex by default; fixed_strings makes metacharacters literal.
-func TestSearchRegexAndFixed(t *testing.T) {
+// 'regex' and 'substring' are different matching modes on the same corpus.
+func TestSearchRegexAndSubstring(t *testing.T) {
 	requireRg(t)
 	ctx := searchVault(t, map[string]string{
 		"a.md": "from: alice@example.com\n",
 		"b.md": "a.b.c literal dots\n",
 	})
 	// regex: \w+@\w+ matches the email line
-	_, re, err := Search(ctx, nil, SearchInput{Query: `\w+@\w+`})
+	_, re, err := Search(ctx, nil, SearchInput{Regex: `\w+@\w+`})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(re.Matches) != 1 || re.Matches[0].Path != "a.md" {
 		t.Errorf("regex email: %v", re.Matches)
 	}
-	// fixed: "a.b" as a literal only matches b.md (the dots), not "alice" etc.
-	_, fx, err := Search(ctx, nil, SearchInput{Query: "a.b", Fixed: true})
+	// substring: "a.b" is literal, so it matches b.md's dots, not "alice" etc.
+	_, sub, err := Search(ctx, nil, SearchInput{Substring: "a.b"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fx.Matches) != 1 || fx.Matches[0].Path != "b.md" {
-		t.Errorf("fixed a.b: %v", fx.Matches)
+	if len(sub.Matches) != 1 || sub.Matches[0].Path != "b.md" {
+		t.Errorf("substring a.b: %v", sub.Matches)
+	}
+}
+
+// The regression this split exists for: a markdown checkbox is a valid regex
+// meaning something else entirely ("- " then a space), so it silently matched
+// the wrong line. As a substring it finds the real open todo.
+func TestSearchCheckboxLiteral(t *testing.T) {
+	requireRg(t)
+	ctx := searchVault(t, map[string]string{
+		"todo.md": "- [ ] open todo\n- [x] done todo\n-  two spaces\n",
+	})
+	_, sub, err := Search(ctx, nil, SearchInput{Substring: "- [ ]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sub.Matches) != 1 || sub.Matches[0].Line != 1 {
+		t.Errorf("substring checkbox: %v", sub.Matches)
+	}
+	// The same text as a regex is a character class, and lands elsewhere.
+	_, re, err := Search(ctx, nil, SearchInput{Regex: "- [ ]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(re.Matches) != 1 || re.Matches[0].Line != 3 {
+		t.Errorf("regex checkbox: %v", re.Matches)
+	}
+}
+
+// Exactly one mode must be named: neither and both are errors, and each error
+// explains the difference rather than just rejecting the call.
+func TestSearchRequiresExactlyOneMode(t *testing.T) {
+	requireRg(t)
+	ctx := searchVault(t, map[string]string{"a.md": "text\n"})
+	for _, in := range []SearchInput{
+		{},
+		{Regex: "a", Substring: "a"},
+	} {
+		_, _, err := Search(ctx, nil, in)
+		if err == nil {
+			t.Fatalf("expected an error for %+v", in)
+		}
+		if !strings.Contains(err.Error(), "substring") || !strings.Contains(err.Error(), "regex") {
+			t.Errorf("error should name both modes, got: %v", err)
+		}
 	}
 }
 
@@ -105,14 +149,14 @@ func TestSearchGlob(t *testing.T) {
 		"a.md":  "needle here\n",
 		"b.txt": "needle here\n",
 	})
-	_, only, err := Search(ctx, nil, SearchInput{Query: "needle", Glob: "*.md"})
+	_, only, err := Search(ctx, nil, SearchInput{Substring: "needle", Glob: "*.md"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(only.Matches) != 1 || only.Matches[0].Path != "a.md" {
 		t.Errorf("glob include *.md: %v", paths(only.Matches))
 	}
-	_, excl, err := Search(ctx, nil, SearchInput{Query: "needle", Glob: "!*.txt"})
+	_, excl, err := Search(ctx, nil, SearchInput{Substring: "needle", Glob: "!*.txt"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +173,7 @@ func TestSearchScope(t *testing.T) {
 		"drafts/x.md":     "needle\n",
 		"drafts/sub/y.md": "needle\n",
 	})
-	_, out, err := Search(ctx, nil, SearchInput{Query: "needle", Path: "drafts"})
+	_, out, err := Search(ctx, nil, SearchInput{Substring: "needle", Path: "drafts"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +196,7 @@ func TestSearchTruncation(t *testing.T) {
 		files[fmt.Sprintf("f%02d.md", i)] = "needle\n"
 	}
 	ctx := searchVault(t, files)
-	_, out, err := Search(ctx, nil, SearchInput{Query: "needle", MaxResults: 4})
+	_, out, err := Search(ctx, nil, SearchInput{Substring: "needle", MaxResults: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +213,7 @@ func TestSearchHidesDotfiles(t *testing.T) {
 		".env":        "TOKEN=secret\n",
 		".git/config": "secret\n",
 	})
-	_, out, err := Search(ctx, nil, SearchInput{Query: "secret"})
+	_, out, err := Search(ctx, nil, SearchInput{Substring: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +226,7 @@ func TestSearchHidesDotfiles(t *testing.T) {
 func TestSearchBadRegex(t *testing.T) {
 	requireRg(t)
 	ctx := searchVault(t, map[string]string{"a.md": "x\n"})
-	if _, _, err := Search(ctx, nil, SearchInput{Query: "("}); err == nil {
+	if _, _, err := Search(ctx, nil, SearchInput{Regex: "("}); err == nil {
 		t.Error("expected an error for an unterminated group")
 	}
 }
@@ -193,7 +237,7 @@ func TestSearchPathConfinement(t *testing.T) {
 	requireRg(t)
 	ctx := searchVault(t, map[string]string{"note.md": "x\n"})
 	for _, bad := range []string{"..", "../..", "../../etc", "/etc", "sub/../.."} {
-		if _, _, err := Search(ctx, nil, SearchInput{Query: "x", Path: bad}); err == nil {
+		if _, _, err := Search(ctx, nil, SearchInput{Substring: "x", Path: bad}); err == nil {
 			t.Errorf("path %q should be rejected as escaping the vault", bad)
 		}
 	}

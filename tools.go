@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -248,40 +249,143 @@ func ReadLines(ctx context.Context, req *mcp.CallToolRequest, in ReadLinesInput)
 
 // ---- read_file ----
 
+// maxReadPaths bounds how many files one call may ask for, mirroring
+// read_frontmatter. The response size is bounded separately, by maxFileBytes
+// across the whole call.
+const maxReadPaths = maxListMax
+
 type ReadFileInput struct {
-	Path string `json:"path" jsonschema:"file to read in full, relative to root"`
+	Paths []string `json:"paths" jsonschema:"files to read in full, relative to root; the output has one entry per path, in this order"`
+	Cap   int      `json:"cap,omitempty" jsonschema:"maximum bytes returned per file (default and maximum 1 MiB); a longer file comes back with truncated=true"`
 }
 
-type ReadFileOutput struct {
+type FileEntry struct {
 	Path      string `json:"path"`
 	Content   string `json:"content"`
 	Bytes     int    `json:"bytes"`
 	Truncated bool   `json:"truncated"`
+	// Error explains why a file has no content — missing, a directory, binary,
+	// or past the call's byte budget. Per-entry, so one bad path does not cost
+	// the caller the rest of the batch.
+	Error string `json:"error,omitempty"`
+}
+
+type ReadFileOutput struct {
+	Entries []FileEntry `json:"entries"`
+	// Truncated is set when any entry was cut short or skipped for budget.
+	Truncated bool `json:"truncated"`
+}
+
+// readOneFile reads one already-resolved file, returning at most budget bytes.
+// Content is capped twice over: by the caller's per-file cap and by what is left
+// of the call's overall budget, so a batch can never return more than a single
+// read_file used to.
+func readOneFile(rel, abs string, limit, budget int) FileEntry {
+	e := FileEntry{Path: rel}
+	if budget <= 0 {
+		e.Error = fmt.Sprintf("not read: the call's %d-byte budget was already used by earlier paths", maxFileBytes)
+		e.Truncated = true
+		return e
+	}
+	info, err := os.Stat(abs)
+	switch {
+	case os.IsNotExist(err):
+		e.Error = "no such file"
+		return e
+	case err != nil:
+		e.Error = "cannot read: " + errText(err)
+		return e
+	case info.IsDir():
+		e.Error = "is a directory"
+		return e
+	}
+	if limit > budget {
+		limit = budget
+	}
+	f, err := os.Open(abs)
+	if err != nil {
+		e.Error = "cannot read: " + errText(err)
+		return e
+	}
+	defer f.Close()
+	// One byte past the limit, so a file that exactly fills it is not mislabelled
+	// as truncated.
+	buf := make([]byte, limit+1)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		e.Error = "cannot read: " + errText(err)
+		return e
+	}
+	data := buf[:n]
+	if looksBinary(data[:min(len(data), 512)]) {
+		e.Error = "appears to be a binary file"
+		return e
+	}
+	content := string(data)
+	if len(content) > limit {
+		// truncateUTF8 backs off to a rune boundary, so a cut file is still
+		// valid text rather than ending in half a character.
+		content = truncateUTF8(content, limit)
+		e.Truncated = true
+	}
+	e.Content = content
+	e.Bytes = len(content)
+	return e
 }
 
 func ReadFile(ctx context.Context, req *mcp.CallToolRequest, in ReadFileInput) (*mcp.CallToolResult, ReadFileOutput, error) {
-	path, err := resolve(in.Path)
-	if err != nil {
-		return nil, ReadFileOutput{}, err
+	if len(in.Paths) == 0 {
+		return nil, ReadFileOutput{}, fmt.Errorf("paths must not be empty")
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, ReadFileOutput{}, err
+	if len(in.Paths) > maxReadPaths {
+		return nil, ReadFileOutput{}, fmt.Errorf("too many paths: %d (max %d); split the call", len(in.Paths), maxReadPaths)
 	}
-	if looksBinary(data[:min(len(data), 512)]) {
-		return nil, ReadFileOutput{}, fmt.Errorf("%s appears to be a binary file", in.Path)
+	limit := in.Cap
+	if limit <= 0 || limit > maxFileBytes {
+		limit = maxFileBytes
 	}
-	truncated := false
-	if len(data) > maxFileBytes {
-		data = data[:maxFileBytes]
-		truncated = true
+	// Resolve everything first and fail the call on an escape: unlike a missing
+	// file, that means the caller asked for something it may not have.
+	abs := make([]string, len(in.Paths))
+	for i, p := range in.Paths {
+		a, err := resolve(p)
+		if err != nil {
+			return nil, ReadFileOutput{}, err
+		}
+		abs[i] = a
 	}
-	out := ReadFileOutput{Path: relPath(path), Content: string(data), Bytes: len(data), Truncated: truncated}
-	text := out.Content
-	if truncated {
-		text += fmt.Sprintf("\n... (truncated at %d bytes)\n", maxFileBytes)
+
+	// One call returns at most maxFileBytes in total — the same ceiling a single
+	// read_file had before it took a list, so batching cannot flood a context
+	// window by accident.
+	budget := maxFileBytes
+	out := ReadFileOutput{Entries: make([]FileEntry, 0, len(in.Paths))}
+	var b strings.Builder
+	for i, p := range in.Paths {
+		e := readOneFile(p, abs[i], limit, budget)
+		budget -= e.Bytes
+		if e.Truncated {
+			out.Truncated = true
+		}
+		out.Entries = append(out.Entries, e)
+
+		b.WriteString(e.Path)
+		b.WriteByte('\n')
+		switch {
+		case e.Error != "":
+			fmt.Fprintf(&b, "(%s)\n", e.Error)
+		default:
+			b.WriteString(e.Content)
+			if !strings.HasSuffix(e.Content, "\n") {
+				b.WriteByte('\n')
+			}
+			if e.Truncated {
+				fmt.Fprintf(&b, "... (truncated at %d bytes)\n", len(e.Content))
+			}
+		}
+		b.WriteByte('\n')
 	}
-	return textResult("%s", text), out, nil
+	return textResult("%s", b.String()), out, nil
 }
 
 // ---- write_file ----

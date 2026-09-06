@@ -45,23 +45,81 @@ func main() {
 	}
 	log.Printf("kbmcp: serving %s", root)
 
+	server := newServer()
+
+	if *httpAddr != "" {
+		if err := serveHTTP(server, *httpAddr, *token); err != nil {
+			log.Fatalf("kbmcp: %v", err)
+		}
+		return
+	}
+
+	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+		log.Fatalf("kbmcp: %v", err)
+	}
+}
+
+// newServer builds the MCP server with every tool registered. Split out of
+// main so a test can drive the real wiring — in particular the tool-list
+// nudge, whose whole job happens at session setup.
+func newServer() *mcp.Server {
+	// Armed after the tools are registered; see the nudge below. A session
+	// cannot reach either trigger before then, since serving starts later, but
+	// the nil check keeps that ordering from being load-bearing.
+	var nudgeToolList func()
+
 	server := mcp.NewServer(&mcp.Implementation{Name: "kbmcp", Version: "0.1.0"}, nil)
 	server.AddReceivingMiddleware(loggingMiddleware)
 
-	mcp.AddTool(server, &mcp.Tool{
+	// Fire the nudge at whichever point this client became able to receive
+	// notifications. There are two, because go-sdk v1.7.0 added a second
+	// handshake: a modern client calls server/discover and then subscriptions/
+	// listen, never sending notifications/initialized at all, so
+	// ServerOptions.InitializedHandler is dead for it. subscriptions/listen is
+	// the better of the two triggers anyway — a modern client only sends it once
+	// it has actually asked for tools-list-changed, so we notify exactly when
+	// someone is listening. A client that subscribes to neither cannot be
+	// reached at all; that is the protocol, not something to work around.
+	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			// subscriptions/listen does not return until the subscription ends,
+			// so the nudge has to go out on the way in, not on the way back.
+			// That is not too early: the send is deferred by the SDK's own 10ms
+			// debounce, by which point next has registered the subscription.
+			// nudgeToolList only schedules, it never blocks.
+			if method == "subscriptions/listen" && nudgeToolList != nil {
+				nudgeToolList()
+			}
+			res, err := next(ctx, method, req)
+			if method == "notifications/initialized" && err == nil && nudgeToolList != nil {
+				nudgeToolList()
+			}
+			return res, err
+		}
+	})
+
+	// Hoisted only so the nudge below has a tool to re-register; which tool that
+	// is does not matter, and list_files is just the first one declared.
+	listFilesTool := &mcp.Tool{
 		Name:        "list_files",
 		Description: "List files and folders within the served folder. Use 'path' to scope to a subfolder and 'recursive' to walk subfolders. Order with 'sort' ('path' default, or 'modified' for last-change time) and 'sort_reverse' (e.g. sort=modified + sort_reverse=true gives newest first). Paginated: at most 'max_results' entries (default 200); if 'truncated' is set, call again with 'from' set to the returned 'next_from' to get the next page.",
-	}, ListFiles)
+	}
+	mcp.AddTool(server, listFilesTool, ListFiles)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search",
-		Description: "Full-text search across the served folder (ripgrep). 'query' is a regular expression unless 'fixed_strings' is set; matching is smart-case unless 'case_sensitive' is set. Scope with 'path', restrict to filenames with 'glob' (e.g. '*.md'), cap with 'max_results'. Returns file paths with line numbers and the matching lines.",
+		Description: "Full-text search across the served folder (ripgrep). Pass exactly one of 'regex' (a regular expression, metacharacters special) or 'substring' (a literal string, metacharacters not special). Matching is smart-case unless 'case_sensitive' is set. Scope with 'path', restrict to filenames with 'glob' (e.g. '*.md'), cap with 'max_results'. Returns file paths with line numbers and the matching lines.",
 	}, Search)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "find_files",
-		Description: "Find files or directories by name (fd). 'pattern' is a regular expression unless 'glob' is set (e.g. '*.md'). 'type' is 'file' (default) or 'dir'. Scope with 'path'. Returns sorted paths, paginated: at most 'max_results' (default 200); if 'truncated', call again with 'from' set to 'next_from'. Hidden files and .git are skipped.",
+		Description: "Find files or directories by name (fd). Pass at most one of 'regex' (a regular expression matched against the filename) or 'glob' (a filename pattern such as '*.md'); passing neither lists everything under the scope. 'type' is 'file' (default) or 'dir'. Scope with 'path'. Returns sorted paths, paginated: at most 'max_results' (default 200); if 'truncated', call again with 'from' set to 'next_from'. Hidden files and .git are skipped.",
 	}, FindFiles)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "search_frontmatter",
+		Description: "Find notes by the values in their YAML frontmatter, and summarise those values with facets. 'filters' are conditions that must all hold; each operator names the type it reads ('date_lte' compares whole days, 'time_lte' instants, unprefixed lt/lte/gt/gte/eq are numeric, plus text_eq/text_contains/bool_eq/exists), and a field value that isn't of that type simply doesn't match. Dotted fields descend into maps and lists ('authentication.dkim', 'attachments.mime_type'). 'facets' summarise the whole match set: text_top (most common values + distinct count), range, date_range/time_range, date_bins/time_bins (histogram, UTC). Pass max_results=0 for facets only. Use read_frontmatter to see what fields a note actually has.",
+	}, SearchFrontmatter)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "read_lines",
@@ -69,8 +127,13 @@ func main() {
 	}, ReadLines)
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "read_frontmatter",
+		Description: "Read the raw YAML frontmatter block of one or more notes, unparsed. Pass 'paths' (get them from list_files, find_files, or search); the result has one entry per path, in the same order, each with the verbatim text between the leading '---' delimiters. Use this to see what fields and structure a note's frontmatter actually has without pulling the whole file. 'cap' bounds the bytes returned per file (default 2000); an over-long or unterminated block comes back with truncated=true — call again with a larger cap if you need the rest.",
+	}, ReadFrontmatter)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "read_file",
-		Description: "Read a whole text file from the served folder (truncated if very large).",
+		Description: "Read whole text files from the served folder. Pass 'paths' (one or many) — the result has one entry per path, in the same order, so a set of search or list results can be pulled in a single call. 'cap' bounds the bytes per file; a call returns at most 1 MiB in total, and anything cut short is flagged with truncated. Use read_lines for a range within one file, or read_frontmatter for just the YAML header.",
 	}, ReadFile)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -118,14 +181,32 @@ func main() {
 		Description: "List notes that nothing else links to (no backlinks).",
 	}, Orphans)
 
-	if *httpAddr != "" {
-		if err := serveHTTP(server, *httpAddr, *token); err != nil {
-			log.Fatalf("kbmcp: %v", err)
-		}
-		return
+	// A restart leaves a connected client holding the tool list it fetched
+	// before. It cannot keep its session — an unknown Mcp-Session-Id gets a 404,
+	// which forces a fresh initialize — but a client that caches the tool list
+	// may carry it across that reconnect and keep calling a parameter that has
+	// since been renamed. So every time a session finishes initializing, tell it
+	// the list is stale.
+	//
+	// What goes out is one content-free line,
+	// {"jsonrpc":"2.0","method":"notifications/tools/list_changed"}. It carries
+	// no tool data; the client has to call tools/list itself, and the current
+	// definitions travel in the response to that. MCP has no message that pushes
+	// tool definitions, so invalidation is the only lever a server has — and it
+	// only reaches a client holding the GET stream open.
+	//
+	// Re-adding an identical tool is that lever: Server.AddTool reports "changed"
+	// unconditionally, and notifySessions (which would let us target one session)
+	// is unexported as of go-sdk v1.7.0. So this reaches every session with an
+	// open stream rather than just the new one — wasteful in steady state, and
+	// exactly right after a restart, when they are all new.
+	//
+	// Because no session survives a restart, once-per-session is already
+	// once-per-restart-per-client: there is no "did we notify yet" state to keep.
+	nudgeToolList = func() {
+		mcp.AddTool(server, listFilesTool, ListFiles)
+		log.Print("kbmcp: client connected; sent tools/list_changed")
 	}
 
-	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-		log.Fatalf("kbmcp: %v", err)
-	}
+	return server
 }

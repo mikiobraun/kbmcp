@@ -17,9 +17,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// As in SearchInput, the matching mode is the name of the field carrying the
+// pattern rather than a flag beside it, so a call cannot silently be read in
+// the mode the caller didn't mean. Unlike search, neither is required: with no
+// pattern at all, fd lists everything under the scope, which is a useful call.
 type FindInput struct {
-	Pattern    string `json:"pattern,omitempty" jsonschema:"filename pattern; a regular expression unless glob is set. Empty matches everything under the scope."`
-	Glob       bool   `json:"glob,omitempty" jsonschema:"treat pattern as a glob (e.g. '*.md') instead of a regular expression"`
+	Regex      string `json:"regex,omitempty" jsonschema:"a regular expression matched against the filename; metacharacters are special. Pass at most one of regex or glob."`
+	Glob       string `json:"glob,omitempty" jsonschema:"a filename glob such as '*.md'; metacharacters carry their glob meaning, not their regex one. Pass at most one of regex or glob."`
 	Type       string `json:"type,omitempty" jsonschema:"what to find: 'file' (default) or 'dir'"`
 	Path       string `json:"path,omitempty" jsonschema:"folder to scope the search to, relative to root; empty means the whole root"`
 	From       string `json:"from,omitempty" jsonschema:"pagination cursor: pass the previous page's next_from to get the next page"`
@@ -43,6 +47,11 @@ func fdBinary() (string, error) {
 }
 
 func FindFiles(ctx context.Context, req *mcp.CallToolRequest, in FindInput) (*mcp.CallToolResult, FindOutput, error) {
+	hasRe := strings.TrimSpace(in.Regex) != ""
+	hasGlob := strings.TrimSpace(in.Glob) != ""
+	if hasRe && hasGlob {
+		return nil, FindOutput{}, fmt.Errorf("pass at most one of 'regex' or 'glob', not both: 'regex' is a regular expression matched against the filename (metacharacters like [ ] . * ? are special); 'glob' is a shell-style filename pattern such as '*.md'. Passing neither matches everything under the scope")
+	}
 	scope, err := resolve(in.Path)
 	if err != nil {
 		return nil, FindOutput{}, err
@@ -66,11 +75,15 @@ func FindFiles(ctx context.Context, req *mcp.CallToolRequest, in FindInput) (*mc
 	// root. The flag form (not a positional) keeps the scope from being mistaken
 	// for the pattern.
 	args := []string{"--color=never", "--type", typ, "--search-path", relPath(scope)}
-	if in.Glob {
+	// Use the raw value, not the trimmed one — the trims above only tested
+	// presence, and surrounding space can be part of a filename pattern.
+	pattern := in.Regex
+	if hasGlob {
+		pattern = in.Glob
 		args = append(args, "--glob")
 	}
-	if strings.TrimSpace(in.Pattern) != "" {
-		args = append(args, "--", in.Pattern)
+	if pattern != "" {
+		args = append(args, "--", pattern)
 	}
 
 	cmd := exec.CommandContext(ctx, fd, args...)
