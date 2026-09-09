@@ -44,7 +44,7 @@ func gitLog(t *testing.T, dir string) []string {
 func TestWriteFileCommits(t *testing.T) {
 	dir := newRepo(t)
 	_, out, err := WriteFile(context.Background(), nil, WriteFileInput{
-		Path: "notes/a.md", Content: "# A\n", Message: "add a",
+		Path: "notes/a.md", Content: "# A\n", AuthorEmail: "test@example.com", Message: "add a",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -60,9 +60,88 @@ func TestWriteFileCommits(t *testing.T) {
 	}
 }
 
+// A tool call must name its author: an agent has no session to be recognised
+// by, and without this the commit silently lands under the vault repo's own
+// identity, making an automated write look like a person's.
+func TestToolWritesRequireAnAuthorEmail(t *testing.T) {
+	newRepo(t)
+	ctx := context.Background()
+
+	if _, _, err := WriteFile(ctx, nil, WriteFileInput{
+		Path: "a.md", Content: "x\n", Message: "add a",
+	}); err == nil {
+		t.Error("write_file without author_email should fail")
+	}
+	if _, _, err := WriteFile(ctx, nil, WriteFileInput{
+		Path: "a.md", Content: "x\n", Message: "add a", AuthorEmail: "  ",
+	}); err == nil {
+		t.Error("a blank author_email should fail")
+	}
+
+	// A dry run writes nothing, so it has nothing to attribute.
+	if _, _, err := WriteFile(ctx, nil, WriteFileInput{
+		Path: "a.md", Content: "x\n", Message: "add a", DryRun: true,
+	}); err != nil {
+		t.Errorf("a dry run should not require attribution: %v", err)
+	}
+
+	// The other two writing tools carry the same requirement.
+	if _, _, err := WriteFile(ctx, nil, WriteFileInput{
+		Path: "a.md", Content: "one\n", Message: "seed", AuthorEmail: "test@example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := EditFile(ctx, nil, EditFileInput{
+		Path: "a.md", OldString: "one", NewString: "two", Message: "edit",
+	}); err == nil {
+		t.Error("edit_file without author_email should fail")
+	}
+	if _, _, err := BatchEdits(ctx, nil, BatchEditsInput{
+		Message: "batch", Ops: []BatchOp{{Op: "write", Path: "b.md", Content: "b\n"}},
+	}); err == nil {
+		t.Error("batch_edits without author_email should fail")
+	}
+}
+
+// The name is optional and defaults to the local part of the email, so a caller
+// that has said who it is need not say it twice.
+func TestAuthorNameDefaultsToTheEmailLocalPart(t *testing.T) {
+	dir := newRepo(t)
+	ctx := context.Background()
+	if _, _, err := WriteFile(ctx, nil, WriteFileInput{
+		Path: "a.md", Content: "x\n", Message: "add a", AuthorEmail: "vault-bot@example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("git", "-C", dir, "log", "-1", "--pretty=%an <%ae>").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "vault-bot <vault-bot@example.com>" {
+		t.Errorf("author = %q, want vault-bot <vault-bot@example.com>", got)
+	}
+
+	// An explicit name still wins.
+	if _, _, err := WriteFile(ctx, nil, WriteFileInput{
+		Path: "b.md", Content: "y\n", Message: "add b",
+		AuthorName: "Vault Bot", AuthorEmail: "vault-bot@example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err = exec.Command("git", "-C", dir, "log", "-1", "--pretty=%an").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "Vault Bot" {
+		t.Errorf("explicit name = %q, want 'Vault Bot'", got)
+	}
+}
+
 func TestWriteFileMessageRequired(t *testing.T) {
 	newRepo(t)
-	if _, _, err := WriteFile(context.Background(), nil, WriteFileInput{Path: "a.md", Content: "x"}); err == nil {
+	if _, _, err := WriteFile(context.Background(), nil, WriteFileInput{
+		Path: "a.md", Content: "x", AuthorEmail: "test@example.com",
+	}); err == nil {
 		t.Fatal("expected error for missing message")
 	}
 }
@@ -70,7 +149,7 @@ func TestWriteFileMessageRequired(t *testing.T) {
 func TestWriteFileDryRunNoCommit(t *testing.T) {
 	dir := newRepo(t)
 	_, out, err := WriteFile(context.Background(), nil, WriteFileInput{
-		Path: "a.md", Content: "x", Message: "m", DryRun: true,
+		Path: "a.md", Content: "x", AuthorEmail: "test@example.com", Message: "m", DryRun: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -88,11 +167,11 @@ func TestWriteFileDryRunNoCommit(t *testing.T) {
 
 func TestEditFileCommits(t *testing.T) {
 	dir := newRepo(t)
-	if _, _, err := WriteFile(context.Background(), nil, WriteFileInput{Path: "a.md", Content: "hello world\n", Message: "init"}); err != nil {
+	if _, _, err := WriteFile(context.Background(), nil, WriteFileInput{Path: "a.md", Content: "hello world\n", AuthorEmail: "test@example.com", Message: "init"}); err != nil {
 		t.Fatal(err)
 	}
 	_, out, err := EditFile(context.Background(), nil, EditFileInput{
-		Path: "a.md", OldString: "world", NewString: "there", Message: "edit a",
+		Path: "a.md", OldString: "world", NewString: "there", AuthorEmail: "test@example.com", Message: "edit a",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -108,11 +187,11 @@ func TestEditFileCommits(t *testing.T) {
 func TestBatchEditsAtomicCommit(t *testing.T) {
 	dir := newRepo(t)
 	// Seed a file to edit.
-	if _, _, err := WriteFile(context.Background(), nil, WriteFileInput{Path: "a.md", Content: "one two\n", Message: "seed"}); err != nil {
+	if _, _, err := WriteFile(context.Background(), nil, WriteFileInput{Path: "a.md", Content: "one two\n", AuthorEmail: "test@example.com", Message: "seed"}); err != nil {
 		t.Fatal(err)
 	}
 	_, out, err := BatchEdits(context.Background(), nil, BatchEditsInput{
-		Message: "batch",
+		AuthorEmail: "test@example.com", Message: "batch",
 		Ops: []BatchOp{
 			{Op: "write", Path: "b.md", Content: "B\n"},
 			{Op: "edit", Path: "a.md", OldString: "two", NewString: "TWO"},
@@ -140,7 +219,7 @@ func TestBatchEditsAtomicCommit(t *testing.T) {
 func TestBatchEditsAbortsOnBadOp(t *testing.T) {
 	dir := newRepo(t)
 	_, _, err := BatchEdits(context.Background(), nil, BatchEditsInput{
-		Message: "batch",
+		AuthorEmail: "test@example.com", Message: "batch",
 		Ops: []BatchOp{
 			{Op: "write", Path: "good.md", Content: "ok\n"},
 			{Op: "edit", Path: "missing.md", OldString: "nope", NewString: "x"},

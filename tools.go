@@ -394,8 +394,8 @@ type WriteFileInput struct {
 	Path        string `json:"path" jsonschema:"file to write, relative to root; parent folders are created as needed"`
 	Content     string `json:"content" jsonschema:"full new contents of the file"`
 	Message     string `json:"message" jsonschema:"commit message (required); the file is committed after being written"`
-	AuthorName  string `json:"author_name,omitempty" jsonschema:"name to attribute the commit to (e.g. the agent making the change); defaults to the repo's configured identity"`
-	AuthorEmail string `json:"author_email,omitempty" jsonschema:"email to attribute the commit to; defaults to the repo's configured identity"`
+	AuthorName  string `json:"author_name,omitempty" jsonschema:"name to attribute the commit to; defaults to the part of author_email before the @"`
+	AuthorEmail string `json:"author_email" jsonschema:"email to attribute the commit to (required): who or what is making this change, e.g. the agent's own address. Every commit names an author, so an automated writer stays distinguishable from a person"`
 	DryRun      bool   `json:"dry_run,omitempty" jsonschema:"if true, return the diff without writing or committing anything"`
 }
 
@@ -481,7 +481,12 @@ func WriteFile(ctx context.Context, req *mcp.CallToolRequest, in WriteFileInput)
 		return textResult("dry run, no changes written.\n--- diff ---\n%s", diff), out, nil
 	}
 
-	res, err := writeAndCommit(in.Path, in.Content, in.Message, in.AuthorName, in.AuthorEmail)
+	authorName, authorEmail, err := toolAuthor(in.AuthorName, in.AuthorEmail)
+	if err != nil {
+		return nil, WriteFileOutput{}, err
+	}
+
+	res, err := writeAndCommit(in.Path, in.Content, in.Message, authorName, authorEmail)
 	if err != nil {
 		return nil, WriteFileOutput{}, err
 	}
@@ -507,8 +512,8 @@ type EditFileInput struct {
 	OldString   string `json:"old_string" jsonschema:"exact text to replace; must occur exactly once unless replace_all is set"`
 	NewString   string `json:"new_string" jsonschema:"text to replace it with"`
 	Message     string `json:"message" jsonschema:"commit message (required); the file is committed after being edited"`
-	AuthorName  string `json:"author_name,omitempty" jsonschema:"name to attribute the commit to (e.g. the agent making the change); defaults to the repo's configured identity"`
-	AuthorEmail string `json:"author_email,omitempty" jsonschema:"email to attribute the commit to; defaults to the repo's configured identity"`
+	AuthorName  string `json:"author_name,omitempty" jsonschema:"name to attribute the commit to; defaults to the part of author_email before the @"`
+	AuthorEmail string `json:"author_email" jsonschema:"email to attribute the commit to (required): who or what is making this change, e.g. the agent's own address. Every commit names an author, so an automated writer stays distinguishable from a person"`
 	ReplaceAll  bool   `json:"replace_all,omitempty" jsonschema:"replace every occurrence instead of requiring a unique match"`
 	DryRun      bool   `json:"dry_run,omitempty" jsonschema:"if true, return the diff without writing or committing anything"`
 }
@@ -571,11 +576,16 @@ func EditFile(ctx context.Context, req *mcp.CallToolRequest, in EditFileInput) (
 		return textResult("dry run, no changes written.\n--- diff ---\n%s", diff), out, nil
 	}
 
+	authorName, authorEmail, err := toolAuthor(in.AuthorName, in.AuthorEmail)
+	if err != nil {
+		return nil, EditFileOutput{}, err
+	}
+
 	if err := os.WriteFile(path, []byte(updated), info.Mode().Perm()); err != nil {
 		return nil, EditFileOutput{}, err
 	}
 
-	committed, err := gitCommit([]string{path}, in.Message, in.AuthorName, in.AuthorEmail)
+	committed, err := gitCommit([]string{path}, in.Message, authorName, authorEmail)
 	if err != nil {
 		return nil, EditFileOutput{}, err
 	}

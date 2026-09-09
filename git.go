@@ -44,6 +44,32 @@ func isGitRepo() bool {
 	return err == nil && strings.TrimSpace(string(out)) == "true"
 }
 
+// toolAuthor validates and completes the attribution a *tool* call carries.
+//
+// The email is required of tools, and only of tools: an agent has no session for
+// the server to recognise it by, so a call that doesn't name itself lands under
+// whatever identity the vault repo is configured with, and an automated write
+// becomes indistinguishable from a person's. A REST write is a different case —
+// it arrives authenticated, and keeps the old fallback until attribution from
+// the session is built (see BACKLOG.md).
+//
+// The name defaults to the local part of the email, so a caller that has already
+// said who it is need not say it twice.
+func toolAuthor(name, email string) (string, string, error) {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return "", "", fmt.Errorf("author_email is required: name who or what is making this change, so the commit is attributable")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = email
+		if at := strings.Index(email, "@"); at > 0 {
+			name = email[:at]
+		}
+	}
+	return name, email, nil
+}
+
 // gitCommit stages the given paths and commits exactly them with message,
 // leaving any other staged changes untouched (pathspec-limited commit). When
 // authorName/authorEmail are non-empty they override the committer identity for

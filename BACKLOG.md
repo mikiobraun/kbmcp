@@ -4,6 +4,33 @@ Known work that is deliberately not done yet, with the reasoning that led there.
 An entry earns its place by being a decision someone would otherwise have to
 re-derive — not by being a to-do.
 
+## REST writes are attributed to the vault's git identity, not the caller
+
+`author_email` is required of the writing *tools*, so an agent always names
+itself. The REST `PUT` keeps both author fields optional, and when they are
+omitted git falls back to the identity configured in the vault repo — so every
+write through the editor is attributed to whoever set the vault up, whatever
+session it arrived on.
+
+That is fine for a single-user vault and wrong the moment there are two. The
+information is already there and unforgeable: `X-Volume-User` reaches kbmcp on
+every gateway-authenticated request (volume-auth sets it after verifying the
+JWT), and today only `logIdentity` reads it.
+
+**Why it isn't done:** the subject is a *username* (`mikio`), and volume-auth
+holds no email for a user — its config is `users: - username: …`. Attribution
+would either synthesise an address, or carry a real one end to end:
+
+1. volume-auth: an `email:` field per user, emitted as `X-Volume-Email`
+2. dev-router: `copy_headers` is hard-coded to `X-Volume-User X-Volume-Scopes`
+   and would need the treatment `cors.headers` got — configurable, not fixed
+3. kbmcp: use the header as the author when the REST call doesn't specify one
+4. editor: nothing — which is the point of doing it this way rather than having
+   the browser assert an identity the gateway has already established
+
+Four repos for a change that buys nothing until there is a second writer, so it
+waits for one.
+
 ## Hidden-file filtering lives in two places
 
 `isHidden` (`safe.go`) decides what kbmcp's own walkers skip: `restListDir`, the

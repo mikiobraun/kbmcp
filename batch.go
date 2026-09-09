@@ -26,8 +26,8 @@ type BatchOp struct {
 type BatchEditsInput struct {
 	Message     string    `json:"message" jsonschema:"commit message for the whole batch (required)"`
 	Ops         []BatchOp `json:"ops" jsonschema:"ordered list of write/edit operations, applied in order and committed together as one commit"`
-	AuthorName  string    `json:"author_name,omitempty" jsonschema:"name to attribute the commit to (e.g. the agent making the change); defaults to the repo's configured identity"`
-	AuthorEmail string    `json:"author_email,omitempty" jsonschema:"email to attribute the commit to; defaults to the repo's configured identity"`
+	AuthorName  string    `json:"author_name,omitempty" jsonschema:"name to attribute the commit to; defaults to the part of author_email before the @"`
+	AuthorEmail string    `json:"author_email" jsonschema:"email to attribute the commit to (required): who or what is making this change, e.g. the agent's own address. Every commit names an author, so an automated writer stays distinguishable from a person"`
 	DryRun      bool      `json:"dry_run,omitempty" jsonschema:"if true, validate and return the diffs without writing or committing anything"`
 }
 
@@ -153,6 +153,11 @@ func BatchEdits(ctx context.Context, req *mcp.CallToolRequest, in BatchEditsInpu
 		return textResult("%s", renderBatch(out, "dry run, nothing written")), out, nil
 	}
 
+	authorName, authorEmail, err := toolAuthor(in.AuthorName, in.AuthorEmail)
+	if err != nil {
+		return nil, BatchEditsOutput{}, err
+	}
+
 	// Write every touched file, then commit them all in one commit.
 	var paths []string
 	for _, rel := range order {
@@ -166,7 +171,7 @@ func BatchEdits(ctx context.Context, req *mcp.CallToolRequest, in BatchEditsInpu
 		paths = append(paths, p)
 	}
 
-	committed, err := gitCommit(paths, in.Message, in.AuthorName, in.AuthorEmail)
+	committed, err := gitCommit(paths, in.Message, authorName, authorEmail)
 	if err != nil {
 		return nil, BatchEditsOutput{}, err
 	}

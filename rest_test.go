@@ -121,7 +121,7 @@ func TestRestHistory(t *testing.T) {
 	newRepo(t)
 	ctx := context.Background()
 	for _, c := range []struct{ path, msg string }{{"a.md", "add a"}, {"b.md", "add b"}} {
-		if _, _, err := WriteFile(ctx, nil, WriteFileInput{Path: c.path, Content: "x\n", Message: c.msg}); err != nil {
+		if _, _, err := WriteFile(ctx, nil, WriteFileInput{Path: c.path, Content: "x\n", Message: c.msg, AuthorEmail: "test@example.com"}); err != nil {
 			t.Fatal(err)
 		}
 	}

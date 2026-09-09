@@ -21,9 +21,9 @@ in it so commits succeed.
 | `read_lines` | `path`, `start` (default 1), `end` (default EOF) | Read a 1-based inclusive line range, line-numbered. |
 | `read_file` | `paths` (one or many), `cap` (bytes per file, optional) | Read whole text files — one entry per path, in order, so a set of search results can be pulled in a single call. A call returns at most 1 MiB in total. |
 | `read_frontmatter` | `paths`, `cap` (bytes per file, default 2000) | Return the raw, unparsed YAML frontmatter block of each note — one entry per path, in order. |
-| `write_file` | `path`, `content`, `message`, `author_name`/`author_email` (optional), `dry_run` (optional) | Create or overwrite a file, then commit it. Parent folders are created. Returns a diff. |
-| `edit_file` | `path`, `old_string`, `new_string`, `message`, `author_name`/`author_email` (optional), `replace_all` (optional), `dry_run` (optional) | Replace exact text, then commit. `old_string` must be unique unless `replace_all`. Returns a diff. |
-| `batch_edits` | `message`, `ops` (each `{op: "write"\|"edit", …}`), `author_name`/`author_email` (optional), `dry_run` (optional) | Apply an ordered mix of writes and edits atomically and commit them as a **single** commit. |
+| `write_file` | `path`, `content`, `message`, `author_email`, `author_name` (optional), `dry_run` (optional) | Create or overwrite a file, then commit it. Parent folders are created. Returns a diff. |
+| `edit_file` | `path`, `old_string`, `new_string`, `message`, `author_email`, `author_name` (optional), `replace_all` (optional), `dry_run` (optional) | Replace exact text, then commit. `old_string` must be unique unless `replace_all`. Returns a diff. |
+| `batch_edits` | `message`, `ops` (each `{op: "write"\|"edit", …}`), `author_email`, `author_name` (optional), `dry_run` (optional) | Apply an ordered mix of writes and edits atomically and commit them as a **single** commit. |
 | `history` | `path` (optional), `max` (optional, default 20), `since` (optional ref) | Compact commit log: short hash, relative time, author, subject. `--follow`s renames for a single file. |
 | `diff` | `from` (default `HEAD~1`), `to` (default `HEAD`), `path` (optional), `stat` (optional) | Unified diff between two commits; `stat: true` gives a per-file insertion/deletion summary. |
 | `file_at` | `path`, `ref` | Read a file's contents as of a given commit ref. |
@@ -253,9 +253,18 @@ is answerable. A commit `message` is **required**; `batch_edits` groups an
 ordered mix of writes (new/overwritten files) and edits (string replacements)
 into one commit, validating every op first so a single bad op writes nothing.
 
-Pass `author_name` / `author_email` to attribute a commit to the agent making
-it (they override the committer identity for that commit only); omit them to fall
-back to the repo's configured identity.
+**`author_email` is required** on every writing tool (`write_file`, `edit_file`,
+`batch_edits`). An agent has no session for the server to recognise it by, so a
+call that doesn't name itself would land under whatever identity the vault repo
+is configured with — and an automated write would be indistinguishable from a
+person's in the history. `author_name` is optional and defaults to the part of
+the email before the `@`, so `vault-bot@example.com` commits as
+`vault-bot <vault-bot@example.com>`. Both override the committer identity for
+that commit only. A `dry_run` writes nothing and needs neither.
+
+The REST `PUT` keeps both optional: it arrives authenticated through the gateway,
+which already knows who is calling. See BACKLOG.md for carrying that identity
+into the commit.
 
 The `history`, `diff`, and `file_at` tools read that history back. Use `history`
 with `since` (a ref you already know) to see just what's changed since you last

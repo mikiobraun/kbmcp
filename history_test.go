@@ -52,10 +52,10 @@ func TestHistoryAndAuthor(t *testing.T) {
 func TestHistoryPathScopeAndFollow(t *testing.T) {
 	dir := newRepo(t)
 	ctx := context.Background()
-	if _, _, err := WriteFile(ctx, nil, WriteFileInput{Path: "a.md", Content: "a\n", Message: "add a"}); err != nil {
+	if _, _, err := WriteFile(ctx, nil, WriteFileInput{Path: "a.md", Content: "a\n", Message: "add a", AuthorEmail: "test@example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := WriteFile(ctx, nil, WriteFileInput{Path: "b.md", Content: "b\n", Message: "add b"}); err != nil {
+	if _, _, err := WriteFile(ctx, nil, WriteFileInput{Path: "b.md", Content: "b\n", Message: "add b", AuthorEmail: "test@example.com"}); err != nil {
 		t.Fatal(err)
 	}
 	// Rename a.md -> a2.md via git so --follow has something to track.
@@ -87,10 +87,10 @@ func TestHistoryPathScopeAndFollow(t *testing.T) {
 func TestDiffAndFileAt(t *testing.T) {
 	newRepo(t)
 	ctx := context.Background()
-	if _, _, err := WriteFile(ctx, nil, WriteFileInput{Path: "a.md", Content: "one\n", Message: "add a"}); err != nil {
+	if _, _, err := WriteFile(ctx, nil, WriteFileInput{Path: "a.md", Content: "one\n", Message: "add a", AuthorEmail: "test@example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := EditFile(ctx, nil, EditFileInput{Path: "a.md", OldString: "one", NewString: "two", Message: "edit a"}); err != nil {
+	if _, _, err := EditFile(ctx, nil, EditFileInput{Path: "a.md", OldString: "one", NewString: "two", Message: "edit a", AuthorEmail: "test@example.com"}); err != nil {
 		t.Fatal(err)
 	}
 
