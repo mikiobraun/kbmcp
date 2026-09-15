@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,7 +16,7 @@ import (
 // maxUploadBytes caps a PUT body, mirroring read_file's 1 MiB read cap.
 const maxUploadBytes = maxFileBytes
 
-// restGet serves the volume over REST (read-only for now): GET /files/<path>
+// restGet serves the volume over REST: GET /files/<path>
 // returns a file's raw content, or a JSON listing for a directory. It reuses the
 // same file layer (path confinement, binary detection) as the MCP tools.
 func restGet(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +126,64 @@ func restPut(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{
 		"path":      relPath(res.Abs),
 		"created":   res.Created,
+		"committed": res.Committed,
+	})
+}
+
+// restDelete removes a file and commits the removal: DELETE /files/<path>, with
+// commit metadata in the query string as for PUT. It goes through the same core
+// as delete_file, so only a file whose content is committed can be deleted
+// (409 otherwise) — every deletion stays recoverable from history.
+//
+// If-Match: <etag> deletes only if the file is unchanged since it was read
+// (else 412), so an editor cannot delete a note someone has just rewritten.
+func restDelete(w http.ResponseWriter, r *http.Request) {
+	rel := strings.TrimPrefix(r.URL.Path, "/files/")
+	q := r.URL.Query()
+	message := q.Get("message")
+	if strings.TrimSpace(message) == "" {
+		http.Error(w, "missing required query parameter: message", http.StatusBadRequest)
+		return
+	}
+
+	path, err := resolveLeaf(rel)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	linfo, err := os.Lstat(path)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if linfo.IsDir() {
+		http.Error(w, fmt.Sprintf("%s is a directory; only files can be deleted", rel), http.StatusBadRequest)
+		return
+	}
+	if im := r.Header.Get("If-Match"); im != "" && im != "*" {
+		// Stat, not Lstat: the ETag GET handed out describes what it served,
+		// which for a symlink is the target.
+		info, err := os.Stat(path)
+		if err != nil || im != etagFor(info) {
+			http.Error(w, "etag precondition failed", http.StatusPreconditionFailed)
+			return
+		}
+	}
+
+	res, err := deleteAndCommit(rel, message, q.Get("author_name"), q.Get("author_email"))
+	if errors.Is(err, errUncommitted) {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(map[string]any{
+		"path":      relPath(res.Abs),
+		"deleted":   true,
 		"committed": res.Committed,
 	})
 }

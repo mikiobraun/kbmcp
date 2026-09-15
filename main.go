@@ -173,8 +173,13 @@ func newServer(instructions string) *mcp.Server {
 	}, EditFile)
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "delete_file",
+		Description: "Delete a file, then commit the removal. Only a file whose current content is committed can be deleted, so every deletion can be undone from history (file_at at the commit before). Folders left empty are removed; a symlink is removed itself, not the file it points to. A commit 'message' is required. Pass dry_run to check the deletion and preview the diff without deleting or committing.",
+	}, DeleteFile)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "batch_edits",
-		Description: "Apply an ordered mix of write (new/overwritten files) and edit (string replacements) operations across one or more files and commit them together as a single commit. All ops are validated first; if any is invalid, nothing is written. A commit 'message' is required. Pass dry_run to preview all diffs without writing or committing.",
+		Description: "Apply an ordered mix of write (new/overwritten files), edit (string replacements), and delete (file removal, same rules as delete_file) operations across one or more files and commit them together as a single commit. All ops are validated first; if any is invalid, nothing is written. A commit 'message' is required. Pass dry_run to preview all diffs without writing or committing.",
 	}, BatchEdits)
 
 	mcp.AddTool(server, &mcp.Tool{

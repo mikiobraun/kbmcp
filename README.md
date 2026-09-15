@@ -23,7 +23,8 @@ in it so commits succeed.
 | `read_frontmatter` | `paths`, `cap` (bytes per file, default 2000) | Return the raw, unparsed YAML frontmatter block of each note — one entry per path, in order. |
 | `write_file` | `path`, `content`, `message`, `author_email`, `author_name` (optional), `dry_run` (optional) | Create or overwrite a file, then commit it. Parent folders are created. Returns a diff. |
 | `edit_file` | `path`, `old_string`, `new_string`, `message`, `author_email`, `author_name` (optional), `replace_all` (optional), `dry_run` (optional) | Replace exact text, then commit. `old_string` must be unique unless `replace_all`. Returns a diff. |
-| `batch_edits` | `message`, `ops` (each `{op: "write"\|"edit", …}`), `author_email`, `author_name` (optional), `dry_run` (optional) | Apply an ordered mix of writes and edits atomically and commit them as a **single** commit. |
+| `delete_file` | `path`, `message`, `author_email`, `author_name` (optional), `dry_run` (optional) | Delete a file, then commit the removal. Only files whose content is committed; folders left empty are removed. Returns a diff. |
+| `batch_edits` | `message`, `ops` (each `{op: "write"\|"edit"\|"delete", …}`), `author_email`, `author_name` (optional), `dry_run` (optional) | Apply an ordered mix of writes, edits, and deletions atomically and commit them as a **single** commit. |
 | `history` | `path` (optional), `max` (optional, default 20), `since` (optional ref) | Compact commit log: short hash, relative time, author, subject. `--follow`s renames for a single file. |
 | `diff` | `from` (default `HEAD~1`), `to` (default `HEAD`), `path` (optional), `stat` (optional) | Unified diff between two commits; `stat: true` gives a per-file insertion/deletion summary. |
 | `file_at` | `path`, `ref` | Read a file's contents as of a given commit ref. |
@@ -246,15 +247,26 @@ real usage asks for them.
 
 ## Git-backed writes & history
 
-Every successful `write_file`, `edit_file`, and `batch_edits` commits its change,
-so the served folder's git history is a complete, inspectable log of edits — the
-point being that when several agents work the same vault, "what changed, by whom"
-is answerable. A commit `message` is **required**; `batch_edits` groups an
-ordered mix of writes (new/overwritten files) and edits (string replacements)
-into one commit, validating every op first so a single bad op writes nothing.
+Every successful `write_file`, `edit_file`, `delete_file`, and `batch_edits`
+commits its change, so the served folder's git history is a complete, inspectable
+log of edits — the point being that when several agents work the same vault,
+"what changed, by whom" is answerable. A commit `message` is **required**;
+`batch_edits` groups an ordered mix of writes (new/overwritten files), edits
+(string replacements), and deletions into one commit, validating every op first
+so a single bad op writes nothing. Each op sees the state earlier ops left: an
+edit after a deletion fails, a write after one recreates the file, and a file
+written and then deleted in the same batch never reaches disk.
+
+Deletion is safe *because* of the history: a deleted file can always be read back
+with `file_at` at the commit before, or restored. So it is refused for anything
+history does not hold — an untracked file, or a tracked one with uncommitted
+changes. Only files can be deleted, not folders; a folder left empty afterwards
+is removed, since git does not track folders and an empty one would otherwise
+linger in listings. A symlink is removed itself, not the file it points to — as
+`rm` does, and as git records it (a link is its own entry).
 
 **`author_email` is required** on every writing tool (`write_file`, `edit_file`,
-`batch_edits`). An agent has no session for the server to recognise it by, so a
+`delete_file`, `batch_edits`). An agent has no session for the server to recognise it by, so a
 call that doesn't name itself would land under whatever identity the vault repo
 is configured with — and an automated write would be indistinguishable from a
 person's in the history. `author_name` is optional and defaults to the part of
@@ -262,7 +274,7 @@ the email before the `@`, so `vault-bot@example.com` commits as
 `vault-bot <vault-bot@example.com>`. Both override the committer identity for
 that commit only. A `dry_run` writes nothing and needs neither.
 
-The REST `PUT` keeps both optional: it arrives authenticated through the gateway,
+The REST `PUT` and `DELETE` keep both optional: it arrives authenticated through the gateway,
 which already knows who is calling. See BACKLOG.md for carrying that identity
 into the commit.
 
@@ -283,6 +295,7 @@ doesn't speak MCP:
 |--------|------|------|-------------|
 | `GET` | `/files/<path>` | — | A file's raw content (markdown as `text/markdown`), or a JSON listing for a directory. |
 | `PUT` | `/files/<path>` | raw file content | Create or overwrite the file, then commit it. Returns `201`/`200`, an `ETag`, and a small JSON body. |
+| `DELETE` | `/files/<path>` | — | Delete the file, then commit the removal, sharing the `delete_file` tool's core. Returns `200` and `{"path","deleted","committed"}`; `409` if the file has uncommitted content. |
 | `GET` | `/history` | — | Recent commits as JSON (`{"commits": [...]}`), mirroring the `history` tool. Optional `?max=&path=&since=`. |
 | `GET` | `/search` | — | Content search as JSON (`{"matches": [{"path","line","text"}], "truncated": bool}`), sharing the `search` tool's core. Requires `?substring=`; optional `?max=`. |
 | `GET` | `/find` | — | Filename search as JSON (`{"paths": [...], "truncated": bool}`), sharing the `find_files` tool's core. Requires `?substring=`; optional `?max=`. |
@@ -300,23 +313,23 @@ has no substring mode: the value is regex-escaped before it reaches `fd`, which
 matches unanchored — so a typed `meeting.md` is a literal substring of the
 filename rather than a pattern whose `.` matches any character.
 
-`PUT` carries commit metadata in the query string, so the body stays pure
-content: `?message=…` (**required**) plus optional `?author_name=…&author_email=…`.
-It commits through the exact same path as `write_file`.
+`PUT` and `DELETE` carry commit metadata in the query string, so the body stays
+pure content: `?message=…` (**required**) plus optional
+`?author_name=…&author_email=…`. They commit through the exact same paths as
+`write_file` and `delete_file`.
 
 Conditional requests give agents optimistic locking against each other, using the
 `ETag` from a prior `GET`:
 
-- `If-Match: <etag>` — overwrite only if the file is unchanged, else `412`.
-- `If-None-Match: *` — create only; `412` if the file already exists.
+- `If-Match: <etag>` — overwrite or delete only if the file is unchanged, else `412`.
+- `If-None-Match: *` — `PUT` only: create only; `412` if the file already exists.
 
 ```sh
 curl -X PUT 'http://host:8070/files/notes/idea.md?message=Add+idea&author_name=alice&author_email=alice@x' \
      -H 'Content-Type: text/markdown' --data-binary @idea.md
 ```
 
-The REST write is read/create/overwrite only — no `DELETE`, and the `edit_file`
-find/replace stays a tool-only affordance.
+The `edit_file` find/replace and `batch_edits` stay tool-only affordances.
 
 ## Build
 

@@ -70,6 +70,24 @@ func toolAuthor(name, email string) (string, string, error) {
 	return name, email, nil
 }
 
+// requireCommitted returns an error wrapping errUncommitted unless abs is
+// tracked and identical to HEAD, in both the index and the working tree.
+func requireCommitted(abs string) error {
+	if _, err := runGit("ls-files", "--error-unmatch", "--", abs); err != nil {
+		return fmt.Errorf("%s is not tracked by git: %w", relPath(abs), errUncommitted)
+	}
+	// Any status line — staged, modified, or a type change — means the file on
+	// disk is not what HEAD holds.
+	out, err := runGit("status", "--porcelain", "--", abs)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(out) != "" {
+		return fmt.Errorf("%s has uncommitted changes: %w", relPath(abs), errUncommitted)
+	}
+	return nil
+}
+
 // gitCommit stages the given paths and commits exactly them with message,
 // leaving any other staged changes untouched (pathspec-limited commit). When
 // authorName/authorEmail are non-empty they override the committer identity for
@@ -80,6 +98,11 @@ func toolAuthor(name, email string) (string, string, error) {
 // relative to HEAD there is nothing to commit and committed is false with a nil
 // error. Callers must have already written the files to disk.
 func gitCommit(paths []string, message, authorName, authorEmail string) (committed bool, err error) {
+	// With no paths, the `--` pathspecs below would match everything, and this
+	// would commit whatever else happens to be staged.
+	if len(paths) == 0 {
+		return false, nil
+	}
 	gitMu.Lock()
 	defer gitMu.Unlock()
 

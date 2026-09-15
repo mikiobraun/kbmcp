@@ -20,7 +20,8 @@ This server exposes one git-backed folder of markdown notes with frontmatter, wh
   - `orphans` lists notes that nothing links to
 - Writing, where every change is a git commit:
   - `write_file` replaces a whole note, `edit_file` replaces a string inside one
-  - `batch_edits` applies several edits as one commit, and writes nothing at all if any single edit fails
+  - `delete_file` removes a note; it refuses one with uncommitted changes, so a deletion can always be undone from history
+  - `batch_edits` applies several writes, edits, and deletions as one commit, and writes nothing at all if any single one fails
 - Reading history, which is queryable data rather than bookkeeping:
   - `history` lists recent commits, `diff` shows what one changed
   - `file_at` reads a note as it stood at a revision
