@@ -37,7 +37,7 @@ func TestResolveTargetGrammar(t *testing.T) {
 		"concepts/unique-note.md":  "only one of these\n",
 		"mails/gmail_123_thing.md": "a mail\n",
 	})
-	idx, err := buildIndex(context.Background())
+	v, err := loadVault(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestResolveTargetGrammar(t *testing.T) {
 		{"escapes never resolve", "../../etc/hostname", "tax/notes.md", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := resolveTarget(tc.raw, tc.from, idx)
+			got := resolveTarget(tc.raw, tc.from, v)
 			if got.Path != tc.want {
 				t.Errorf("resolveTarget(%q, from %q) = %q (reason %q), want %q",
 					tc.raw, tc.from, got.Path, got.Reason, tc.want)

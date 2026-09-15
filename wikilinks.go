@@ -24,10 +24,13 @@ type wikiLink struct {
 	Raw  string // target exactly as written; a slash in it changes its meaning
 	Line int    // 1-based line number of the occurrence
 	Text string // trimmed source line, for context
+	// Start and End are Raw's byte offsets in the note, so a move can rewrite
+	// exactly this occurrence and not the same text shown in a code span.
+	Start, End int
 }
 
 // linkGraph is a snapshot of all wiki-links across the vault. Names live in
-// noteIndex instead, which can be built without reading anything.
+// vaultView instead, which can be built without reading anything.
 type linkGraph struct {
 	notes    []string              // all note paths (relative to root), sorted
 	outgoing map[string][]wikiLink // note path -> links it contains
@@ -65,20 +68,107 @@ func hasParentSegment(target string) bool {
 	return false
 }
 
-// statNote returns the vault-relative path of an existing note at rel, trying
-// the name as given and then with .md appended. A directory is not a note, and
-// resolve() keeps the lookup inside the vault.
-func statNote(rel string) string {
-	for _, candidate := range []string{rel, rel + ".md"} {
-		abs, err := resolve(candidate)
+// vaultView is the vault as link resolution sees it: which files exist, and
+// which notes carry each name. resolveTarget consults nothing else, so a move
+// can be checked against the vault as it will be — a copy with one path swapped
+// — before anything on disk changes. Every link question goes through it, which
+// keeps a link meaning the same thing to /links, backlinks, orphans and a move.
+//
+// It is built from fd, not a walk, so it agrees with /find and find_files about
+// what is in the vault: hidden paths are absent, and a symlinked folder is not
+// descended into.
+type vaultView struct {
+	// files maps each path to the file it resolves to: itself, or for a symlink
+	// its target — which is what a stat of the link reports.
+	files  map[string]string
+	byName map[string][]string // noteName -> regular .md files carrying it, sorted
+}
+
+func loadVault(ctx context.Context) (*vaultView, error) {
+	regular, err := fdRun(ctx, []string{"--color=never", "--no-ignore", "--type", "f", "--search-path", "."})
+	if err != nil {
+		return nil, err
+	}
+	links, err := fdRun(ctx, []string{"--color=never", "--no-ignore", "--type", "l", "--search-path", "."})
+	if err != nil {
+		return nil, err
+	}
+	v := &vaultView{files: make(map[string]string, len(regular)+len(links))}
+	for _, p := range regular {
+		v.files[p] = p
+	}
+	// resolve follows the link and refuses a target outside the vault or on a
+	// hidden path; a dangling link or one to a folder resolves to nothing.
+	for _, p := range links {
+		abs, err := resolve(p)
 		if err != nil {
 			continue
 		}
 		if info, err := os.Stat(abs); err == nil && !info.IsDir() {
-			return relPath(abs)
+			v.files[p] = relPath(abs)
+		}
+	}
+	v.index()
+	return v, nil
+}
+
+// index derives byName from files. Only regular files are named — a symlink is
+// reachable by its path, not by a second name for the note it points at. The
+// suffix test ignores case, as fd's '*.md' glob does.
+func (v *vaultView) index() {
+	v.byName = map[string][]string{}
+	for p, target := range v.files {
+		if p == target && strings.HasSuffix(strings.ToLower(p), ".md") {
+			key := noteName(p)
+			v.byName[key] = append(v.byName[key], p)
+		}
+	}
+	for _, hits := range v.byName {
+		sort.Strings(hits)
+	}
+}
+
+// file returns the file an existing path resolves to, trying the name as given
+// and then with .md appended, or "" if neither exists.
+func (v *vaultView) file(rel string) string {
+	rel = filepath.Clean(rel)
+	for _, candidate := range []string{rel, rel + ".md"} {
+		if p, ok := v.files[candidate]; ok {
+			return p
 		}
 	}
 	return ""
+}
+
+// notes lists the regular .md files, sorted: the notes whose links count.
+func (v *vaultView) notes() []string {
+	var out []string
+	for _, hits := range v.byName {
+		out = append(out, hits...)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// changed returns a copy with the removed paths gone and the added ones present
+// as regular files. A symlink to a removed file goes too: on disk it would now
+// dangle, and a dangling link resolves to nothing.
+func (v *vaultView) changed(removed, added []string) *vaultView {
+	gone := map[string]bool{}
+	for _, p := range removed {
+		gone[p] = true
+	}
+	w := &vaultView{files: make(map[string]string, len(v.files)+len(added))}
+	for p, target := range v.files {
+		if !gone[p] && !gone[target] {
+			w.files[p] = target
+		}
+	}
+	for _, p := range added {
+		w.files[p] = p
+	}
+	w.index()
+	return w
 }
 
 // linkResolution is what one [[...]] resolved to. Candidates is filled only when
@@ -91,13 +181,11 @@ type linkResolution struct {
 }
 
 // resolveTarget implements the link grammar documented in the README. `from` is
-// the linking note's vault-relative path; `idx` is consulted only for the
-// vault-wide name lookup and may be nil to skip it — the caller then learns from
-// the reason that it needs an index and can ask again.
+// the linking note's vault-relative path, and v the vault to resolve against.
 //
 // A slash decides everything: without one the target is a name, with one it is a
 // path from the vault root.
-func resolveTarget(raw, from string, idx *noteIndex) linkResolution {
+func resolveTarget(raw, from string, v *vaultView) linkResolution {
 	target := linkTarget(raw)
 	if target == "" {
 		return linkResolution{Reason: "empty link target"}
@@ -113,14 +201,14 @@ func resolveTarget(raw, from string, idx *noteIndex) linkResolution {
 	switch {
 	// Explicitly the linking note's own folder.
 	case strings.HasPrefix(target, "./"):
-		if p := statNote(filepath.Join(dir, strings.TrimPrefix(target, "./"))); p != "" {
+		if p := v.file(filepath.Join(dir, strings.TrimPrefix(target, "./"))); p != "" {
 			return linkResolution{Path: p}
 		}
 		return linkResolution{Reason: "no such note beside " + from}
 
 	// A path: from the vault root, leading slash optional.
 	case strings.Contains(target, "/"):
-		if p := statNote(strings.TrimPrefix(target, "/")); p != "" {
+		if p := v.file(strings.TrimPrefix(target, "/")); p != "" {
 			return linkResolution{Path: p}
 		}
 		return linkResolution{Reason: "no note at that path"}
@@ -129,14 +217,11 @@ func resolveTarget(raw, from string, idx *noteIndex) linkResolution {
 	// A name: the linking note's folder first, so a per-folder README convention
 	// resolves to the README beside you.
 	if dir != "" {
-		if p := statNote(filepath.Join(dir, target)); p != "" {
+		if p := v.file(filepath.Join(dir, target)); p != "" {
 			return linkResolution{Path: p}
 		}
 	}
-	if idx == nil {
-		return linkResolution{Reason: "not a sibling; needs the name index"}
-	}
-	switch hits := idx.byName[noteName(target)]; len(hits) {
+	switch hits := v.byName[noteName(target)]; len(hits) {
 	case 0:
 		return linkResolution{Reason: "no note with that name"}
 	case 1:
@@ -146,27 +231,6 @@ func resolveTarget(raw, from string, idx *noteIndex) linkResolution {
 	}
 }
 
-// noteIndex maps a note name to every note carrying it. It is built from the
-// same fd-backed listing that /find and find_files use, so link resolution
-// agrees with them about what is in the vault instead of walking with a third
-// set of rules. No note is read: resolution needs names, not contents.
-type noteIndex struct {
-	byName map[string][]string
-}
-
-func buildIndex(ctx context.Context) (*noteIndex, error) {
-	paths, err := fdPaths(ctx, FindInput{Glob: "*.md"})
-	if err != nil {
-		return nil, err
-	}
-	idx := &noteIndex{byName: map[string][]string{}}
-	for _, p := range paths {
-		key := noteName(filepath.Base(p))
-		idx.byName[key] = append(idx.byName[key], p)
-	}
-	return idx, nil
-}
-
 // parseLinks extracts one note's [[...]] occurrences, keeping each target as
 // written — resolution needs the raw form, since a slash in it changes what the
 // link means. Fenced blocks and inline code spans are skipped: a [[...]] shown
@@ -174,7 +238,10 @@ func buildIndex(ctx context.Context) (*noteIndex, error) {
 func parseLinks(data []byte) []wikiLink {
 	var out []wikiLink
 	inFence := false
+	offset := 0 // byte offset of the current line in data
 	for i, line := range strings.Split(string(data), "\n") {
+		lineStart := offset
+		offset += len(line) + 1
 		if t := strings.TrimSpace(line); strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
 			inFence = !inFence
 			continue
@@ -182,24 +249,26 @@ func parseLinks(data []byte) []wikiLink {
 		if inFence {
 			continue
 		}
-		scan := inlineCodeRe.ReplaceAllString(line, " ")
-		for _, m := range wikiLinkRe.FindAllStringSubmatch(scan, -1) {
-			out = append(out, wikiLink{Raw: m[1], Line: i + 1, Text: strings.TrimSpace(line)})
+		// Blank code spans out with as many spaces as they held, so positions in
+		// scan are positions in line.
+		scan := inlineCodeRe.ReplaceAllStringFunc(line, func(s string) string { return strings.Repeat(" ", len(s)) })
+		for _, m := range wikiLinkRe.FindAllStringSubmatchIndex(scan, -1) {
+			out = append(out, wikiLink{
+				Raw: line[m[2]:m[3]], Line: i + 1, Text: strings.TrimSpace(line),
+				Start: lineStart + m[2], End: lineStart + m[3],
+			})
 		}
 	}
 	return out
 }
 
 // buildGraph reads every note and parses its wiki-links, for the questions that
-// genuinely need a reverse index — backlinks and orphans. Nothing else should
-// call it: resolving one note's outgoing links costs a read and some stats (see
-// outgoingCore), where this costs a read of the whole vault. Rebuilt per call,
-// which the vault's size affords and which avoids stale-cache concerns.
-func buildGraph(ctx context.Context) (*linkGraph, error) {
-	notes, err := fdPaths(ctx, FindInput{Glob: "*.md"})
-	if err != nil {
-		return nil, err
-	}
+// genuinely need a reverse index — backlinks, orphans and a move. Resolving one
+// note's outgoing links costs a single read (see outgoingCore), where this costs
+// a read of the whole vault. Rebuilt per call, which the vault's size affords
+// and which avoids stale-cache concerns.
+func buildGraph(v *vaultView) *linkGraph {
+	notes := v.notes()
 	g := &linkGraph{notes: notes, outgoing: map[string][]wikiLink{}}
 	for _, rel := range notes {
 		abs, err := resolve(rel)
@@ -214,8 +283,7 @@ func buildGraph(ctx context.Context) (*linkGraph, error) {
 			g.outgoing[rel] = links
 		}
 	}
-	sort.Strings(g.notes)
-	return g, nil
+	return g
 }
 
 // requireNote resolves a caller path and confirms it points at an existing file.
@@ -254,14 +322,11 @@ func Backlinks(ctx context.Context, req *mcp.CallToolRequest, in BacklinksInput)
 	if err != nil {
 		return nil, BacklinksOutput{}, err
 	}
-	g, err := buildGraph(ctx)
+	v, err := loadVault(ctx)
 	if err != nil {
 		return nil, BacklinksOutput{}, err
 	}
-	idx, err := buildIndex(ctx)
-	if err != nil {
-		return nil, BacklinksOutput{}, err
-	}
+	g := buildGraph(v)
 	self := relPath(path)
 
 	// A backlink is a link that *resolves to* this note — not one whose name
@@ -273,7 +338,7 @@ func Backlinks(ctx context.Context, req *mcp.CallToolRequest, in BacklinksInput)
 			continue // ignore self-links
 		}
 		for _, l := range g.outgoing[note] {
-			if resolveTarget(l.Raw, note, idx).Path == self {
+			if resolveTarget(l.Raw, note, v).Path == self {
 				out.Backlinks = append(out.Backlinks, Backlink{Path: note, Line: l.Line, Text: l.Text})
 			}
 		}
@@ -311,9 +376,9 @@ type OutgoingLinksOutput struct {
 	Links []OutLink `json:"links"`
 }
 
-// outgoingCore resolves one note's links: a single read, a stat per link, and
-// at most one fd run — only if some bare name isn't a sibling. No graph, and no
-// other note is read. Shared by the tool and GET /links.
+// outgoingCore resolves one note's links: a single read, and one fd listing if
+// the note has any links. No graph, and no other note is read. Shared by the
+// tool and GET /links.
 func outgoingCore(ctx context.Context, notePath string) (OutgoingLinksOutput, error) {
 	abs, err := requireNote(notePath)
 	if err != nil {
@@ -326,18 +391,16 @@ func outgoingCore(ctx context.Context, notePath string) (OutgoingLinksOutput, er
 	self := relPath(abs)
 	out := OutgoingLinksOutput{Path: self}
 
-	// First pass without an index, so the vault listing is only paid for when a
-	// link actually needs a name lookup.
-	var idx *noteIndex
 	links := parseLinks(data)
+	if len(links) == 0 {
+		return out, nil
+	}
+	v, err := loadVault(ctx)
+	if err != nil {
+		return OutgoingLinksOutput{}, err
+	}
 	for _, l := range links {
-		r := resolveTarget(l.Raw, self, idx)
-		if r.Path == "" && idx == nil && r.Reason == "not a sibling; needs the name index" {
-			if idx, err = buildIndex(ctx); err != nil {
-				return OutgoingLinksOutput{}, err
-			}
-			r = resolveTarget(l.Raw, self, idx)
-		}
+		r := resolveTarget(l.Raw, self, v)
 		out.Links = append(out.Links, OutLink{
 			Target:     linkTarget(l.Raw),
 			Resolved:   r.Path,
@@ -378,21 +441,18 @@ type OrphansOutput struct {
 }
 
 func Orphans(ctx context.Context, req *mcp.CallToolRequest, in OrphansInput) (*mcp.CallToolResult, OrphansOutput, error) {
-	g, err := buildGraph(ctx)
+	v, err := loadVault(ctx)
 	if err != nil {
 		return nil, OrphansOutput{}, err
 	}
-	idx, err := buildIndex(ctx)
-	if err != nil {
-		return nil, OrphansOutput{}, err
-	}
+	g := buildGraph(v)
 
 	// Resolve through the same rule the other two use, so "linked" here means
 	// exactly what a backlink means there.
 	linked := map[string]bool{}
 	for _, note := range g.notes {
 		for _, l := range g.outgoing[note] {
-			if p := resolveTarget(l.Raw, note, idx).Path; p != "" && p != note {
+			if p := resolveTarget(l.Raw, note, v).Path; p != "" && p != note {
 				linked[p] = true
 			}
 		}

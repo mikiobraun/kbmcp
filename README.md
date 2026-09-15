@@ -24,7 +24,8 @@ in it so commits succeed.
 | `write_file` | `path`, `content`, `message`, `author_email`, `author_name` (optional), `dry_run` (optional) | Create or overwrite a file, then commit it. Parent folders are created. Returns a diff. |
 | `edit_file` | `path`, `old_string`, `new_string`, `message`, `author_email`, `author_name` (optional), `replace_all` (optional), `dry_run` (optional) | Replace exact text, then commit. `old_string` must be unique unless `replace_all`. Returns a diff. |
 | `delete_file` | `path`, `message`, `author_email`, `author_name` (optional), `dry_run` (optional) | Delete a file, then commit the removal. Only files whose content is committed; folders left empty are removed. Returns a diff. |
-| `batch_edits` | `message`, `ops` (each `{op: "write"\|"edit"\|"delete", …}`), `author_email`, `author_name` (optional), `dry_run` (optional) | Apply an ordered mix of writes, edits, and deletions atomically and commit them as a **single** commit. |
+| `move_file` | `from`, `to`, `message`, `author_email`, `author_name` (optional), `dry_run` (optional) | Move or rename a file and rewrite the `[[wiki links]]` whose target would otherwise change, as one commit. Returns the rewritten links and diffs. |
+| `batch_edits` | `message`, `ops` (each `{op: "write"\|"edit"\|"delete"\|"move", …}`), `author_email`, `author_name` (optional), `dry_run` (optional) | Apply an ordered mix of writes, edits, deletions, and moves atomically and commit them as a **single** commit. |
 | `history` | `path` (optional), `max` (optional, default 20), `since` (optional ref) | Compact commit log: short hash, relative time, author, subject. `--follow`s renames for a single file. |
 | `diff` | `from` (default `HEAD~1`), `to` (default `HEAD`), `path` (optional), `stat` (optional) | Unified diff between two commits; `stat: true` gives a per-file insertion/deletion summary. |
 | `file_at` | `path`, `ref` | Read a file's contents as of a given commit ref. |
@@ -67,6 +68,31 @@ declining it is cheaper than guarding it.
 An `|alias` or `#heading` suffix is stripped before resolution (`^block`
 references likewise), and `[[...]]` inside code spans or fenced code blocks is
 not treated as a link. Transclusion (`![[note]]`) is not supported.
+
+Resolution works on a listing of the vault's files (one `fd` run), never on
+stats of individual paths, so the same code can answer for the vault as it will
+be after a move. Paths match case-sensitively; only names are case-insensitive.
+A symlink resolves to its target, and a symlinked folder is not descended into,
+as with `find_files`.
+
+#### Moves keep links pointing where they pointed
+
+`move_file` (and a `move` op in `batch_edits`) holds one rule: **every link that
+resolved before the move resolves to the same note after it**, the moved note
+counting as itself at its new path. Every link in the vault is resolved against
+the vault before and after the move, and exactly those whose answer changed are
+rewritten. That catches more than links to the moved note:
+
+- the moved note's own `[[./x]]` and sibling-first names resolve from its new folder;
+- a name the move brings into a folder shadows the vault-wide note a sibling's
+  `[[name]]` used to find;
+- a name the move duplicates makes a previously unique `[[name]]` ambiguous.
+
+A rewrite keeps the alias, heading or block suffix and an explicit `.md`, and
+tries forms in order — the link's own form, a bare name, a vault path, a vault
+path with a leading `/` — taking the first that resolves to the right note. A
+link that was already broken has no target to keep and is left alone, even when
+the move happens to make it resolve.
 
 The write tools return a unified-style diff of the change, and accept
 `dry_run: true` to preview that diff without writing or committing anything. For
@@ -247,7 +273,7 @@ real usage asks for them.
 
 ## Git-backed writes & history
 
-Every successful `write_file`, `edit_file`, `delete_file`, and `batch_edits`
+Every successful `write_file`, `edit_file`, `delete_file`, `move_file`, and `batch_edits`
 commits its change, so the served folder's git history is a complete, inspectable
 log of edits — the point being that when several agents work the same vault,
 "what changed, by whom" is answerable. A commit `message` is **required**;
@@ -265,8 +291,17 @@ is removed, since git does not track folders and an empty one would otherwise
 linger in listings. A symlink is removed itself, not the file it points to — as
 `rm` does, and as git records it (a link is its own entry).
 
+A move is committed as the removal of the old path and the addition of the new
+one, together with every note whose links it rewrote; git pairs the two paths up
+as a rename, so `history` follows the file across it. It is refused when the
+destination exists (a move never overwrites), and — since committing a file
+commits all of it — when the moved file or any note needing a rewrite has
+uncommitted changes. Folders are created as needed and pruned when emptied. Only
+files move, not folders, and not symlinks or the target of one: a relative
+symlink would stop pointing where it did.
+
 **`author_email` is required** on every writing tool (`write_file`, `edit_file`,
-`delete_file`, `batch_edits`). An agent has no session for the server to recognise it by, so a
+`delete_file`, `move_file`, `batch_edits`). An agent has no session for the server to recognise it by, so a
 call that doesn't name itself would land under whatever identity the vault repo
 is configured with — and an automated write would be indistinguishable from a
 person's in the history. `author_name` is optional and defaults to the part of
@@ -274,7 +309,7 @@ the email before the `@`, so `vault-bot@example.com` commits as
 `vault-bot <vault-bot@example.com>`. Both override the committer identity for
 that commit only. A `dry_run` writes nothing and needs neither.
 
-The REST `PUT` and `DELETE` keep both optional: it arrives authenticated through the gateway,
+The REST `PUT`, `DELETE` and `POST /move` keep both optional: it arrives authenticated through the gateway,
 which already knows who is calling. See BACKLOG.md for carrying that identity
 into the commit.
 
@@ -296,6 +331,7 @@ doesn't speak MCP:
 | `GET` | `/files/<path>` | — | A file's raw content (markdown as `text/markdown`), or a JSON listing for a directory. |
 | `PUT` | `/files/<path>` | raw file content | Create or overwrite the file, then commit it. Returns `201`/`200`, an `ETag`, and a small JSON body. |
 | `DELETE` | `/files/<path>` | — | Delete the file, then commit the removal, sharing the `delete_file` tool's core. Returns `200` and `{"path","deleted","committed"}`; `409` if the file has uncommitted content. |
+| `POST` | `/move` | — | Move a file and rewrite links, sharing the `move_file` tool's core. Requires `?from=&to=&message=`; `?dry_run=true` reports without writing. Returns `{"from","to","dry_run","committed","links":[{"path","line","old","new"}],"files":[…]}`; `404` if `from` is missing, `409` if the destination exists or content is uncommitted. |
 | `GET` | `/history` | — | Recent commits as JSON (`{"commits": [...]}`), mirroring the `history` tool. Optional `?max=&path=&since=`. |
 | `GET` | `/search` | — | Content search as JSON (`{"matches": [{"path","line","text"}], "truncated": bool}`), sharing the `search` tool's core. Requires `?substring=`; optional `?max=`. |
 | `GET` | `/find` | — | Filename search as JSON (`{"paths": [...], "truncated": bool}`), sharing the `find_files` tool's core. Requires `?substring=`; optional `?max=`. |
@@ -313,15 +349,15 @@ has no substring mode: the value is regex-escaped before it reaches `fd`, which
 matches unanchored — so a typed `meeting.md` is a literal substring of the
 filename rather than a pattern whose `.` matches any character.
 
-`PUT` and `DELETE` carry commit metadata in the query string, so the body stays
+`PUT`, `DELETE` and `POST /move` carry commit metadata in the query string, so the body stays
 pure content: `?message=…` (**required**) plus optional
 `?author_name=…&author_email=…`. They commit through the exact same paths as
-`write_file` and `delete_file`.
+`write_file`, `delete_file` and `move_file`.
 
 Conditional requests give agents optimistic locking against each other, using the
 `ETag` from a prior `GET`:
 
-- `If-Match: <etag>` — overwrite or delete only if the file is unchanged, else `412`.
+- `If-Match: <etag>` — overwrite, delete or move only if the file (for a move, `from`) is unchanged, else `412`.
 - `If-None-Match: *` — `PUT` only: create only; `412` if the file already exists.
 
 ```sh

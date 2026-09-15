@@ -178,8 +178,13 @@ func newServer(instructions string) *mcp.Server {
 	}, DeleteFile)
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "move_file",
+		Description: "Move or rename a file, then commit it. Every [[wiki link]] in the vault that resolved before the move is rewritten, where needed, to resolve to the same note after it — links to the moved note, the moved note's own relative links, and links elsewhere that a new name in a folder would otherwise capture or make ambiguous. Already-broken links are left alone. The move and the rewrites are one commit. Refused if the destination exists, or if the file or any note needing a rewrite has uncommitted changes. A commit 'message' is required. Pass dry_run to see the rewrites and diffs without writing or committing.",
+	}, MoveFile)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "batch_edits",
-		Description: "Apply an ordered mix of write (new/overwritten files), edit (string replacements), and delete (file removal, same rules as delete_file) operations across one or more files and commit them together as a single commit. All ops are validated first; if any is invalid, nothing is written. A commit 'message' is required. Pass dry_run to preview all diffs without writing or committing.",
+		Description: "Apply an ordered mix of write (new/overwritten files), edit (string replacements), delete (file removal, same rules as delete_file), and move (same rules as move_file, including link rewrites) operations across one or more files and commit them together as a single commit. All ops are validated first; if any is invalid, nothing is written. A commit 'message' is required. Pass dry_run to preview all diffs without writing or committing.",
 	}, BatchEdits)
 
 	mcp.AddTool(server, &mcp.Tool{

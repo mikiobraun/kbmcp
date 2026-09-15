@@ -44,11 +44,18 @@ input struct). Each handler returns **both** a human-readable text result
 
 **Git-backed writes.** `git.go` is the only place that runs git: `runGit` for
 read-only commands, `gitCommit` for pathspec-limited commits guarded by `gitMu`.
-`writeAndCommit` (`tools.go`) is the shared write core — `write_file`,
-`batch_edits`, and REST `PUT` all go through it, so behavior stays identical
-across surfaces. `batch_edits` validates every op against evolving in-memory
-content *before* touching disk, so a bad op writes nothing. Refs from callers are
+`writeAndCommit` (`tools.go`) is the shared write core for `write_file` and REST
+`PUT`, so behavior stays identical across surfaces. `batch_edits` validates every
+op against evolving in-memory content (`batchState`, `planBatch`) *before*
+touching disk, so a bad op writes nothing; `move_file` and REST `POST /move` are
+a one-op batch (`batchState.move` in `move.go`). Refs from callers are
 validated by `validRef` (no leading `-`, no `..` ranges) before reaching git.
+
+**Wiki links** resolve against a `vaultView` (`wikilinks.go`) — every path mapped
+to the file it resolves to, from one fd run — never against disk directly. That
+is what lets a move resolve every link against the vault before and after and
+rewrite exactly those whose target changed. Anything that resolves links must
+take a `vaultView`, or a link will mean different things on different surfaces.
 
 **External binaries.** `search` shells out to ripgrep (`--json` stream, cancelled
 early once `max_results` is hit rather than drained) and `find_files` to fd

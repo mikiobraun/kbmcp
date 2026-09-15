@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -188,6 +189,64 @@ func restDelete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// restMove moves a file and commits it together with every wiki link it had to
+// rewrite: POST /move?from=…&to=…&message=…, with commit metadata as for PUT. It
+// shares move_file's core. ?dry_run=true returns the same report — above all
+// the links that would be rewritten — without writing, so an editor can show
+// them before the user commits to the move.
+//
+// If-Match: <etag> applies to from, as for DELETE. A refusal is 404 when from
+// is missing, 409 when it or a note whose link needs rewriting has uncommitted
+// content or the destination is taken, and 400 otherwise.
+func restMove(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	from, to, message := q.Get("from"), q.Get("to"), q.Get("message")
+	for name, v := range map[string]string{"from": from, "to": to, "message": message} {
+		if strings.TrimSpace(v) == "" {
+			http.Error(w, "missing required query parameter: "+name, http.StatusBadRequest)
+			return
+		}
+	}
+	dryRun := q.Get("dry_run") == "true"
+
+	if im := r.Header.Get("If-Match"); im != "" && im != "*" {
+		abs, err := resolveLeaf(from)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// A missing file falls through, so the move reports it as a 404.
+		if info, err := os.Stat(abs); err == nil && im != etagFor(info) {
+			http.Error(w, "etag precondition failed", http.StatusPreconditionFailed)
+			return
+		}
+	}
+
+	s := newBatchState()
+	if err := s.move(r.Context(), from, to); err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			status = http.StatusNotFound
+		case errors.Is(err, errUncommitted), errors.Is(err, errTargetExists):
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	out := moveOutput(s, from, to, dryRun)
+	if !dryRun {
+		committed, err := s.commit(message, q.Get("author_name"), q.Get("author_email"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out.Committed = committed
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(out)
+}
+
 // restHistory returns recent commits as JSON: GET /history?max=&path=&since=.
 // It mirrors the history tool (short hash, dates, author, subject) so the editor
 // can show a "recent changes" log without speaking MCP.
@@ -284,7 +343,7 @@ func restFind(w http.ResponseWriter, r *http.Request) {
 // GET /links?path=<note> -> {path, links:[{target,resolved,broken,reason,candidates,line}]}.
 //
 // It shares outgoingCore with the tool, so a link resolves the same way for a
-// browser as for an agent. That path costs one file read and a stat per link —
+// browser as for an agent. That path costs one file read and one fd listing —
 // no graph, and no other note is read — which is what makes it reasonable to
 // call every time a note is opened.
 func restLinks(w http.ResponseWriter, r *http.Request) {

@@ -21,7 +21,8 @@ This server exposes one git-backed folder of markdown notes with frontmatter, wh
 - Writing, where every change is a git commit:
   - `write_file` replaces a whole note, `edit_file` replaces a string inside one
   - `delete_file` removes a note; it refuses one with uncommitted changes, so a deletion can always be undone from history
-  - `batch_edits` applies several writes, edits, and deletions as one commit, and writes nothing at all if any single one fails
+  - `move_file` moves or renames a note and rewrites the wiki links that would otherwise point elsewhere, in the same commit — prefer it to a write plus a delete, which breaks links and loses the rename in history
+  - `batch_edits` applies several writes, edits, deletions, and moves as one commit, and writes nothing at all if any single one fails
 - Reading history, which is queryable data rather than bookkeeping:
   - `history` lists recent commits, `diff` shows what one changed
   - `file_at` reads a note as it stood at a revision

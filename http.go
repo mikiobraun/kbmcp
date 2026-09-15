@@ -42,6 +42,7 @@ func serveHTTP(server *mcp.Server, addr, token string) error {
 	mux.HandleFunc("GET /files/", restGet)
 	mux.HandleFunc("PUT /files/", restPut)
 	mux.HandleFunc("DELETE /files/", restDelete)
+	mux.HandleFunc("POST /move", restMove)
 	mux.HandleFunc("GET /history", restHistory)
 	mux.HandleFunc("GET /search", restSearch)
 	mux.HandleFunc("GET /find", restFind)

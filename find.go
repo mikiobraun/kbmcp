@@ -113,10 +113,6 @@ func fdPaths(ctx context.Context, in FindInput) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	fd, err := fdBinary()
-	if err != nil {
-		return nil, err
-	}
 
 	typ := "f"
 	switch in.Type {
@@ -144,7 +140,15 @@ func fdPaths(ctx context.Context, in FindInput) ([]string, error) {
 	if pattern != "" {
 		args = append(args, "--", pattern)
 	}
+	return fdRun(ctx, args)
+}
 
+// fdRun runs fd from root with args and returns the paths it prints, sorted.
+func fdRun(ctx context.Context, args []string) ([]string, error) {
+	fd, err := fdBinary()
+	if err != nil {
+		return nil, err
+	}
 	cmd := exec.CommandContext(ctx, fd, args...)
 	cmd.Dir = root
 	var stderr bytes.Buffer
