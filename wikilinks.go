@@ -231,6 +231,13 @@ func resolveTarget(raw, from string, v *vaultView) linkResolution {
 	}
 }
 
+// isFenceLine reports whether a line opens or closes a fenced code block. Links
+// and the outline both skip what is inside one, and must agree on where it is.
+func isFenceLine(line string) bool {
+	t := strings.TrimSpace(line)
+	return strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")
+}
+
 // parseLinks extracts one note's [[...]] occurrences, keeping each target as
 // written — resolution needs the raw form, since a slash in it changes what the
 // link means. Fenced blocks and inline code spans are skipped: a [[...]] shown
@@ -242,7 +249,7 @@ func parseLinks(data []byte) []wikiLink {
 	for i, line := range strings.Split(string(data), "\n") {
 		lineStart := offset
 		offset += len(line) + 1
-		if t := strings.TrimSpace(line); strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+		if isFenceLine(line) {
 			inFence = !inFence
 			continue
 		}

@@ -158,6 +158,11 @@ func newServer(instructions string) *mcp.Server {
 	}, ReadFrontmatter)
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "read_outline",
+		Description: "List the '#', '##' and '###' headings of one or more notes, each with the line range its section spans (subsections included), to see how a long note is organised and then read just one section with read_lines. Pass 'paths'; the result has one entry per path, in the same order, with the note's line count. Headings inside frontmatter or fenced code blocks are not headings, and deeper headings belong to the section around them.",
+	}, ReadOutline)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "read_file",
 		Description: "Read whole text files from the served folder. Pass 'paths' (one or many) — the result has one entry per path, in the same order, so a set of search or list results can be pulled in a single call. 'cap' bounds the bytes per file; a call returns at most 1 MiB in total, and anything cut short is flagged with truncated. Use read_lines for a range within one file, or read_frontmatter for just the YAML header.",
 	}, ReadFile)

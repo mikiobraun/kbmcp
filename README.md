@@ -21,6 +21,7 @@ in it so commits succeed.
 | `read_lines` | `path`, `start` (default 1), `end` (default EOF) | Read a 1-based inclusive line range, line-numbered. |
 | `read_file` | `paths` (one or many), `cap` (bytes per file, optional) | Read whole text files — one entry per path, in order, so a set of search results can be pulled in a single call. A call returns at most 1 MiB in total. |
 | `read_frontmatter` | `paths`, `cap` (bytes per file, default 2000) | Return the raw, unparsed YAML frontmatter block of each note — one entry per path, in order. |
+| `read_outline` | `paths` | List each note's `#`, `##` and `###` headings with the line range of each section — one entry per path, in order. The ranges go straight into `read_lines`. |
 | `write_file` | `path`, `content`, `message`, `author_email`, `author_name` (optional), `dry_run` (optional) | Create or overwrite a file, then commit it. Parent folders are created. Returns a diff. |
 | `edit_file` | `path`, `old_string`, `new_string`, `message`, `author_email`, `author_name` (optional), `replace_all` (optional), `dry_run` (optional) | Replace exact text, then commit. `old_string` must be unique unless `replace_all`. Returns a diff. |
 | `delete_file` | `path`, `message`, `author_email`, `author_name` (optional), `dry_run` (optional) | Delete a file, then commit the removal. Only files whose content is committed; folders left empty are removed. Returns a diff. |
@@ -101,6 +102,22 @@ avoid the O(N×M) cost of the line-diff — similar to how GitHub hides diffs fo
 huge files. Note that the approval/confirmation prompt for a write is shown by
 the **client** (e.g. Claude Desktop's "allow tool" dialog), not by this server —
 MCP has no server-rendered diff-approval UI.
+
+### Outlines
+
+`read_outline` is for long notes. It lists the `#`, `##` and `###` headings with
+the line range each section spans: from the heading to the line before the next
+heading of the same or a higher level, subsections included. Lines are counted
+the way `read_lines` counts them, so an agent can look at the outline and read
+one section, instead of pulling the whole note to find it.
+
+It is a separate tool, not a flag on `read_file`, for the same reason the search
+tools name their modes in their fields: what a call returns should not depend
+on a flag read once in the tool list. A `#` line inside frontmatter (a YAML
+comment) or a fenced code block is not a heading, and neither is a `#tag` at the
+start of a line. Deeper headings are not listed and not boundaries, so their
+text belongs to the section around them. Frontmatter counts only when its block
+is closed.
 
 ## Search & discovery
 

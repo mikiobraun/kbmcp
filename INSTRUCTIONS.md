@@ -13,6 +13,7 @@ This server exposes one git-backed folder of markdown notes with frontmatter, wh
 - Reading notes:
   - `read_file` and `read_frontmatter` take a list of paths and return one entry per path — pull a whole set of search results in one call, not one call per file
   - `read_lines` reads a line range inside a single file
+  - for a long note, `read_outline` first: it lists the `#`, `##` and `###` headings with the line range of each section, so you can `read_lines` just the section you need
   - results are capped; when one comes back truncated, pass `next_from` back for the next page rather than broadening the query
 - Following links:
   - `outgoing_links` lists the [[wiki links]] in a note, and which of them are broken
