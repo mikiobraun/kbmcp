@@ -548,3 +548,7 @@ claude mcp add --transport http kb http://your-host:8070/ \
 - `search` and `find_files` shell out to `rg` and `fd` — both must be installed
   on the host. The frontmatter tools have no such dependency.
 - Single served folder per process.
+
+## License
+
+BSD 3-Clause — see [LICENSE](LICENSE).
