@@ -14,6 +14,7 @@ in it so commits succeed.
 
 | Tool | Arguments | Description |
 |------|-----------|-------------|
+| `instructions` | — | Return this server's instructions — the same text sent at connect. Offered only when the server has instructions to give. |
 | `list_files` | `path`, `recursive`, `sort` (`path`\|`modified`), `sort_reverse`, `max_results` (default 200), `from` — all optional | List entries under the served folder, sorted and paginated. `sort: modified` + `sort_reverse: true` gives newest first. |
 | `search` | exactly one of `regex` / `substring`, plus `path` (scope), `glob`, `case_sensitive`, `max_results` (default 100) | Full-text content search via ripgrep. `regex` treats metacharacters as special, `substring` does not; smart-case unless `case_sensitive`; `glob` restricts by filename. Returns `file:line: text`. |
 | `find_files` | at most one of `regex` / `glob`, plus `type` (`file`\|`dir`), `path` (scope), `max_results` (default 200), `from` — all optional | Find files/directories by name via fd. `regex` matches the filename as a regular expression, `glob` as a shell pattern; neither lists everything under the scope. Returns a sorted, paginated path list. |
@@ -499,6 +500,14 @@ serve a different file — useful when one binary serves more than one vault, si
 the text describes a *particular* knowledge base. A missing file is not an error:
 the server simply sends no instructions. Edits take effect on restart, and a
 connected client will not see them until it reconnects.
+
+The same text is also readable as a tool, `instructions`. Not every client
+surfaces the handshake string to the model — one that works through tool
+discovery may hand an agent these tools long after connect, with no orientation
+attached — and a tool is the surface every client exposes. It returns the string
+loaded at startup rather than re-reading the file, so the tool and the handshake
+can never describe the vault differently. When there is no instructions text,
+the tool is not registered at all.
 
 ## Wire it into a client
 

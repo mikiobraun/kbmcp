@@ -124,6 +124,16 @@ func newServer(instructions string) *mcp.Server {
 		}
 	})
 
+	// Registered only when there is something to return: a client with no
+	// INSTRUCTIONS.md would otherwise be offered a tool that answers nothing,
+	// and an empty tool is worse than an absent one in a discovery list.
+	if instructions != "" {
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "instructions",
+			Description: "Read this server's instructions: how this particular knowledge base is organised and which tool answers which kind of question. The same text is sent once at connect, so call this only if you have not been given it — typically when these tools were found through tool discovery rather than at the start of the session.",
+		}, Instructions(instructions))
+	}
+
 	// Hoisted only so the nudge below has a tool to re-register; which tool that
 	// is does not matter, and list_files is just the first one declared.
 	listFilesTool := &mcp.Tool{
