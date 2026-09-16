@@ -100,4 +100,5 @@ fallback that never overrides the real environment.
   there. Add an entry when a decision would otherwise have to be re-derived;
   delete it when the work lands.
 - `dev.yaml` describes this service to the auth gateway; it is not read by this
-  binary.
+  binary and is gitignored — it names a deployment's own hostnames, which do not
+  belong in a public repo.
