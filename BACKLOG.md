@@ -66,9 +66,9 @@ waits for one.
 ## Hidden-file filtering lives in two places
 
 `isHidden` (`safe.go`) decides what kbmcp's own walkers skip: `restListDir`, the
-list and read tools, `wikilinks`, `frontmatter_search`. Search and find don't use
-it — they inherit `rg`'s and `fd`'s built-in hidden-file rules, since we pass
-`--no-ignore` but never `--hidden`.
+list and read tools, `wikilinks`. Search, find and search_frontmatter don't use
+it — they inherit `rg`'s, `fd`'s and `fmq`'s built-in hidden-file rules, since we
+pass `--no-ignore` but never `--hidden`.
 
 The two agree today only because both mean "a leading dot". They are not the same
 implementation, and nothing enforces that they stay in step.
@@ -85,6 +85,11 @@ basename — a file inside a hidden directory is hidden, which is currently `rg`
 and `fd`'s doing, and the easy part to get wrong when replicating it. Better
 still, make `isHidden` the only implementation and post-filter from the start,
 rather than keeping two rules that must be kept identical by hand.
+
+fmq cannot be post-filtered: its facets and denominators are computed over the
+whole scan, so dropping paths afterwards leaves them counting files the listing
+hides. The rule would have to reach fmq as an input — an exclude option in the
+contract (SPEC.md), not a filter in kbmcp.
 
 Not built now: nothing needs it, and speculative machinery would be a third thing
 to keep in step.

@@ -1,0 +1,10 @@
+{
+  "max_results": 0,
+  "facets": [
+    {
+      "field": "d",
+      "stat": "date_bins",
+      "bin": "day"
+    }
+  ]
+}

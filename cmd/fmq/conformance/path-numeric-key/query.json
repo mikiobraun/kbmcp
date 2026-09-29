@@ -1,0 +1,8 @@
+{
+  "filters": [
+    {
+      "field": "1",
+      "op": "exists"
+    }
+  ]
+}

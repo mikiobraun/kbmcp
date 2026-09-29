@@ -1,0 +1,21 @@
+{
+  "matches": [
+    {
+      "path": "a.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "b.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "c.md",
+      "modified": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 3,
+  "truncated": false,
+  "scanned": 3,
+  "with_frontmatter": 3,
+  "unparsable": 0
+}

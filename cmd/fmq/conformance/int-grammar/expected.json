@@ -1,0 +1,17 @@
+{
+  "matches": [
+    {
+      "path": "neg.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "octal-looking.md",
+      "modified": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 2,
+  "truncated": false,
+  "scanned": 11,
+  "with_frontmatter": 11,
+  "unparsable": 0
+}

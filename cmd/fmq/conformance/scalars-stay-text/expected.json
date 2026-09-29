@@ -1,0 +1,21 @@
+{
+  "matches": [
+    {
+      "path": "double.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "single.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "unquoted.md",
+      "modified": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 3,
+  "truncated": false,
+  "scanned": 4,
+  "with_frontmatter": 4,
+  "unparsable": 0
+}

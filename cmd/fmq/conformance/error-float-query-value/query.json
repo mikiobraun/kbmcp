@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "x",
+      "op": "float_eq",
+      "value": "NaN"
+    }
+  ]
+}

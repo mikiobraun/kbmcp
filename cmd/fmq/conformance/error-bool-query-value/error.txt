@@ -1,0 +1,1 @@
+bool is lowercase true/false only

@@ -1,0 +1,14 @@
+{
+  "filters": [
+    {
+      "field": "tags",
+      "op": "text_eq",
+      "value": "work"
+    },
+    {
+      "field": "auth.dkim",
+      "op": "text_eq",
+      "value": "pass"
+    }
+  ]
+}

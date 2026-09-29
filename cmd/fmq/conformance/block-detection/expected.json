@@ -1,0 +1,25 @@
+{
+  "matches": [
+    {
+      "path": "crlf.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "no-newline-at-end.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "not-markdown.txt",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "ok.md",
+      "modified": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 4,
+  "truncated": false,
+  "scanned": 13,
+  "with_frontmatter": 6,
+  "unparsable": 2
+}

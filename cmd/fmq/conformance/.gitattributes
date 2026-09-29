@@ -1,0 +1,3 @@
+# Case files are test fixtures whose exact bytes matter (CRLF, BOM, NUL):
+# never let git convert line endings.
+* -text

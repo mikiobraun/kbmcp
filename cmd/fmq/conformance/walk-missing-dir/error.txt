@@ -1,0 +1,1 @@
+a dir that does not exist is an error, not an empty result

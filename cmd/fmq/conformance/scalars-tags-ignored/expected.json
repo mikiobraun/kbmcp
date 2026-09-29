@@ -1,0 +1,17 @@
+{
+  "matches": [
+    {
+      "path": "plain.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "str.md",
+      "modified": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 2,
+  "truncated": false,
+  "scanned": 2,
+  "with_frontmatter": 2,
+  "unparsable": 0
+}

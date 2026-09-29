@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "n",
+      "op": "float_eq",
+      "value": "7.0"
+    }
+  ]
+}

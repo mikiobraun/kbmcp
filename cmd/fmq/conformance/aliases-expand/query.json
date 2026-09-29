@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "copy.dkim",
+      "op": "text_eq",
+      "value": "pass"
+    }
+  ]
+}

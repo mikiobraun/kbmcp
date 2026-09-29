@@ -1,0 +1,18 @@
+{
+  "matches": [],
+  "total": 5,
+  "truncated": true,
+  "scanned": 5,
+  "with_frontmatter": 5,
+  "unparsable": 0,
+  "facets": [
+    {
+      "field": "nothing",
+      "stat": "text_top",
+      "docs": 0,
+      "count": 0,
+      "distinct": 0,
+      "unparsed": 0
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "filters": [
+    {
+      "field": "size",
+      "op": "int_gte",
+      "value": "100"
+    }
+  ],
+  "facets": [
+    {
+      "field": "tag",
+      "stat": "text_top"
+    },
+    {
+      "field": "size",
+      "stat": "int_range"
+    }
+  ]
+}

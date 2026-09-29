@@ -4,16 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`kbmcp` is a single-package Go MCP server (module `kbmcp`, all files `package main`)
-that exposes **one git-backed folder** — a markdown vault — over MCP (stdio or
-Streamable HTTP) plus a small REST surface. Every write is a git commit; history
-is a first-class, queryable part of the API. Built on
+`kbmcp` is a Go MCP server (module `kbmcp`, the server itself all `package main`
+at the root) that exposes **one git-backed folder** — a markdown vault — over MCP
+(stdio or Streamable HTTP) plus a small REST surface. Every write is a git
+commit; history is a first-class, queryable part of the API. Built on
 `github.com/modelcontextprotocol/go-sdk`.
+
+The repo also holds **fmq**, the frontmatter query CLI that `search_frontmatter`
+runs: the library in `fmq/`, the command in `cmd/fmq/`, and its contract in
+`cmd/fmq/SPEC.md`. It lives here until it moves to its own repo, so it must not
+import anything from the server. `cmd/fmq/conformance/` is SPEC.md as
+executable cases run against a binary (`FMQ=… go test ./cmd/fmq -run
+Conformance`); a behaviour change to fmq updates SPEC.md and adds or changes a
+case there, not just a unit test. `-update` regenerates `expected.json` from this
+tree — review every changed file against the spec before keeping it.
 
 ## Commands
 
 ```sh
-go build -o kbmcp .          # build
+make                         # build ./kbmcp and bin/fmq
+make install                 # fmq onto PATH, which search_frontmatter needs
 go test ./...                # all tests
 go test -run TestSearchSmartCase -v ./...   # single test
 go vet ./...
@@ -23,7 +33,8 @@ KBMCP_TOKEN=secret ./kbmcp -http :8070 /path/to/vault   # run: HTTP
 
 Tests that need `rg`, `fd`, or `git` skip themselves when the binary is missing
 (see `requireRg` in `search_test.go`). `go test` needs `git` for the write/history
-tests.
+tests. fmq is never skipped: `TestMain` (`frontmatter_search_test.go`) builds it
+from this tree, so the server is tested against the fmq it ships with.
 
 ## Architecture
 
@@ -62,7 +73,9 @@ early once `max_results` is hit rather than drained) and `find_files` to fd
 (`fd`/`fdfind`). Both are run with `cmd.Dir = root` and a *relative* scope so
 paths come back relative to root, and both inherit rg/fd's default skipping of
 hidden files, `.git`, and gitignored paths. `search.go`'s header comment marks it
-as the home for future search modes (frontmatter-field search, then semantic).
+as the home for future search modes (semantic next). `search_frontmatter` runs
+fmq the same way (`-query-json - -o json -- <scope>`) and relays fmq's stderr
+verbatim as the error, because fmq's messages name the fix.
 
 **Pagination** is stateless throughout: `from` is an exclusive lower bound on the
 sort key and `next_from` is the cursor to pass back (`entrySortKey` in `tools.go`

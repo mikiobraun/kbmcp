@@ -1,0 +1,29 @@
+{
+  "matches": [
+    {
+      "path": "NULL.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "Null.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "map.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "quoted-empty.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "quoted.md",
+      "modified": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 5,
+  "truncated": false,
+  "scanned": 11,
+  "with_frontmatter": 11,
+  "unparsable": 0
+}

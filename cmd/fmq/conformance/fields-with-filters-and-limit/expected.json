@@ -1,0 +1,21 @@
+{
+  "matches": [
+    {
+      "path": "a.md",
+      "modified": "2026-01-01T00:00:00Z",
+      "fields": {
+        "title": [
+          "Hello"
+        ]
+      }
+    }
+  ],
+  "total": 2,
+  "truncated": true,
+  "scanned": 2,
+  "with_frontmatter": 2,
+  "unparsable": 0,
+  "field_coverage": {
+    "title": 2
+  }
+}

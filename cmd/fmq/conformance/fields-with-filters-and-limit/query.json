@@ -1,0 +1,13 @@
+{
+  "filters": [
+    {
+      "field": "tags",
+      "op": "text_eq",
+      "value": "a"
+    }
+  ],
+  "fields": [
+    "title"
+  ],
+  "max_results": 1
+}

@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "tags",
+      "op": "text_eq",
+      "value": "work"
+    }
+  ]
+}

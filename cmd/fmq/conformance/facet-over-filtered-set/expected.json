@@ -1,0 +1,51 @@
+{
+  "matches": [
+    {
+      "path": "a.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "b.md",
+      "modified": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 2,
+  "truncated": false,
+  "scanned": 5,
+  "with_frontmatter": 5,
+  "unparsable": 0,
+  "facets": [
+    {
+      "field": "tag",
+      "stat": "text_top",
+      "docs": 2,
+      "count": 5,
+      "distinct": 3,
+      "unparsed": 0,
+      "top": [
+        {
+          "value": "a",
+          "count": 2
+        },
+        {
+          "value": "c",
+          "count": 2
+        },
+        {
+          "value": "b",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "field": "size",
+      "stat": "int_range",
+      "docs": 2,
+      "count": 2,
+      "distinct": 2,
+      "unparsed": 0,
+      "min": "100",
+      "max": "250"
+    }
+  ]
+}

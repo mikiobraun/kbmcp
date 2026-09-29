@@ -1,0 +1,9 @@
+{
+  "facets": [
+    {
+      "field": "x",
+      "stat": "date_bins",
+      "bin": "hour"
+    }
+  ]
+}

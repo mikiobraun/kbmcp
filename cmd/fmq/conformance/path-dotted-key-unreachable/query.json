@@ -1,0 +1,8 @@
+{
+  "filters": [
+    {
+      "field": "weird.key",
+      "op": "exists"
+    }
+  ]
+}

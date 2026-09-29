@@ -1,0 +1,6 @@
+{
+  "filters": [
+    {"field": "tags", "op": "int_lt", "value": "5"},
+    {"field": "tags", "op": "int_gt", "value": "10"}
+  ]
+}

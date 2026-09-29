@@ -1,0 +1,34 @@
+{
+  "matches": [],
+  "total": 5,
+  "truncated": true,
+  "scanned": 5,
+  "with_frontmatter": 5,
+  "unparsable": 0,
+  "facets": [
+    {
+      "field": "d",
+      "stat": "time_bins",
+      "docs": 4,
+      "count": 4,
+      "distinct": 4,
+      "unparsed": 1,
+      "min": "2026-01-02T23:30:00Z",
+      "max": "2026-03-05T00:00:00Z",
+      "bins": [
+        {
+          "bin": "2026-01-02T23",
+          "count": 1
+        },
+        {
+          "bin": "2026-01-03T00",
+          "count": 1
+        },
+        {
+          "bin": "2026-03-05T00",
+          "count": 1
+        }
+      ]
+    }
+  ]
+}

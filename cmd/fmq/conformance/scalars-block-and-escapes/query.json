@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "v",
+      "op": "text_eq",
+      "value": "two\nlines\n"
+    }
+  ]
+}

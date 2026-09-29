@@ -1,0 +1,33 @@
+{
+  "matches": [
+    {
+      "path": "empty-list.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "empty.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "list-of-null.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "missing.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "null.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "tilde.md",
+      "modified": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 6,
+  "truncated": false,
+  "scanned": 11,
+  "with_frontmatter": 11,
+  "unparsable": 0
+}

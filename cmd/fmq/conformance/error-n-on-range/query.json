@@ -1,0 +1,9 @@
+{
+  "facets": [
+    {
+      "field": "x",
+      "stat": "int_range",
+      "n": 3
+    }
+  ]
+}

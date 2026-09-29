@@ -1,0 +1,1 @@
+unknown keys in the query document are an error

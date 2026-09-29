@@ -1,0 +1,9 @@
+{
+  "max_results": 0,
+  "facets": [
+    {
+      "field": "x",
+      "stat": "text_top"
+    }
+  ]
+}

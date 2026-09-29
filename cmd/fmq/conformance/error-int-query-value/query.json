@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "x",
+      "op": "int_eq",
+      "value": "5.0"
+    }
+  ]
+}

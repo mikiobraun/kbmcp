@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "nested",
+      "op": "text_eq",
+      "value": "c"
+    }
+  ]
+}

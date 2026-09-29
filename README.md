@@ -17,7 +17,7 @@ in it so commits succeed.
 | `list_files` | `path`, `recursive`, `sort` (`path`\|`modified`), `sort_reverse`, `max_results` (default 200), `from` — all optional | List entries under the served folder, sorted and paginated. `sort: modified` + `sort_reverse: true` gives newest first. |
 | `search` | exactly one of `regex` / `substring`, plus `path` (scope), `glob`, `case_sensitive`, `max_results` (default 100) | Full-text content search via ripgrep. `regex` treats metacharacters as special, `substring` does not; smart-case unless `case_sensitive`; `glob` restricts by filename. Returns `file:line: text`. |
 | `find_files` | at most one of `regex` / `glob`, plus `type` (`file`\|`dir`), `path` (scope), `max_results` (default 200), `from` — all optional | Find files/directories by name via fd. `regex` matches the filename as a regular expression, `glob` as a shell pattern; neither lists everything under the scope. Returns a sorted, paginated path list. |
-| `search_frontmatter` | `filters`, `facets`, `path` (scope), `sort` (`path`\|`modified`), `sort_reverse`, `max_results` — all optional | Find notes by their YAML frontmatter values, and summarise those values with facets. Each operator names the type it reads; facets are computed over the whole match set. |
+| `search_frontmatter` | `filters`, `facets`, `fields`, `path` (scope), `sort` (`path`\|`modified`), `sort_reverse`, `max_results` — all optional | Find notes by their YAML frontmatter values, and summarise those values with facets. Each operator names the type it reads; facets are computed over the whole match set. |
 | `read_lines` | `path`, `start` (default 1), `end` (default EOF) | Read a 1-based inclusive line range, line-numbered. |
 | `read_file` | `paths` (one or many), `cap` (bytes per file, optional) | Read whole text files — one entry per path, in order, so a set of search results can be pulled in a single call. A call returns at most 1 MiB in total. |
 | `read_frontmatter` | `paths`, `cap` (bytes per file, default 2000) | Return the raw, unparsed YAML frontmatter block of each note — one entry per path, in order. |
@@ -154,8 +154,8 @@ listing shows those files either way, so skipping them here would make the vault
 answer differently depending on which door you came through.
 
 That leaves exactly one rule about what is invisible — a leading dot — which
-`rg` and `fd` apply themselves, and `isHidden` applies to every path kbmcp walks
-on its own.
+`rg`, `fd` and `fmq` apply themselves, and `isHidden` applies to every path kbmcp
+walks on its own.
 
 ## Restarts and stale tool lists
 
@@ -177,10 +177,22 @@ principle: one tool per result shape.
 
 ## Frontmatter
 
-Notes carry a YAML frontmatter block, and two tools work on it. Unlike `search`
-and `find_files` these are pure Go — no external binary, a full scan every time,
-which is the right trade for a vault of hundreds of notes. If it ever outgrows
-that, the answer is a real search engine, not a hand-rolled index.
+Notes carry a YAML frontmatter block, and two tools work on it. `read_frontmatter`
+is built in. `search_frontmatter` runs **`fmq`**, a standalone CLI in this repo
+(`cmd/fmq`), the way `search` runs `rg`: kbmcp confines the scope and relays the
+result, fmq does the query. The contract between them — query JSON in, result
+JSON out, and the exact semantics — is [`cmd/fmq/SPEC.md`](cmd/fmq/SPEC.md), so
+any implementation of it can take fmq's place; a conformance suite
+(`cmd/fmq/conformance/`) checks one. This one is a full scan every
+time, the right trade for a vault of hundreds of notes; a faster one would be an
+index behind the same contract.
+
+`fmq` is also useful on its own, from a shell or a coding agent:
+
+```sh
+fmq -date_gte date 2026-09-01 -f from_name:text_top:5 mails
+fmq -o json -query-json query.json notes
+```
 
 ### `read_frontmatter` — the raw block
 
@@ -223,16 +235,33 @@ reads**, so nothing is inferred and nothing is overloaded:
 | Operators | Reads the value as |
 |---|---|
 | `exists` | any non-null value at the path |
+| `not_exists` | the exact complement: missing, null, or an empty list |
 | `text_eq`, `text_contains` | text (case-sensitive) |
 | `bool_eq` | boolean |
-| `eq`, `lt`, `lte`, `gt`, `gte` | number (numeric is the unprefixed default) |
+| `int_eq`, `int_lt`, `int_lte`, `int_gt`, `int_gte` | integer, compared exactly at any length |
+| `float_eq`, `float_lt`, `float_lte`, `float_gt`, `float_gte` | 64-bit float |
 | `date_eq`, `date_lt`, `date_lte`, `date_gt`, `date_gte` | whole days, UTC |
 | `time_eq`, `time_lt`, `time_lte`, `time_gt`, `time_gte` | instants |
 
 `date_` and `time_` are separate so that comparing a timestamp against a bare day
 never has to invent an answer to "is `2026-01-03` midnight or 23:59?" — the
-caller picks the granularity. A date operator accepts every spelling YAML
-produces for one type (a quoted ISO string, a native YAML date, any UTC offset).
+caller picks the granularity. Integers and floats are separate for a similar
+reason: past 2^53 a float calls two different long IDs equal, so `int_` compares
+exactly. The unprefixed `eq`/`lt`/… are refused with an error naming both
+replacements.
+
+**YAML's own type guessing is switched off.** Every scalar stays the text it was
+written as, and only the operator decides how to read it — so `date: 2026-01-03`
+and `date: '2026-01-03'` are the same value, and `text_eq 2026-01-03` finds
+both. Each type accepts one written form, exactly:
+
+| Type | Accepts |
+|---|---|
+| integer | `42`, `-7`, any number of digits — not `5.0` or `1e3` |
+| float | plain decimals: `42`, `-4.2`, `1e3` — no `NaN`, `Inf`, hex, `1_000`, or octal |
+| boolean | `true`, `false` (lowercase only) |
+| date/time | `2026-01-03`, `2026/01/03`, `2026-01-03T15:04[:05]` or with a space instead of `T`, and RFC 3339 with an offset; a value without an offset is UTC |
+| null | an unquoted empty value, `~` or `null` — the field then does not `exist` |
 
 A field value that is not of the operator's type simply **does not match**; that
 is ordinary in a loosely-typed vault, not an error. A *query* value of the wrong
@@ -247,7 +276,7 @@ chooses the statistic, for the same reason operators name their types:
 | Stat | Returns |
 |---|---|
 | `text_top` | the most common values with counts (`n`, default 5) |
-| `range` | numeric min/max |
+| `int_range`, `float_range` | numeric min/max |
 | `date_range`, `time_range` | min/max |
 | `date_bins`, `time_bins` | histogram over the full range plus min/max; `bin` is `day`/`month`/`year`, and for `time_bins` also `minute`/`hour` |
 
@@ -265,8 +294,9 @@ field whose `distinct` equals its `count` with top counts of 1 tells the agent
 Results carry `scanned`, `with_frontmatter` and `unparsable` alongside `total`,
 which is what makes an empty result interpretable: no matches among 105 notes
 that have frontmatter means something quite different from no matches among none.
-A note whose YAML is malformed is counted in `unparsable` and skipped — one bad
-note must not fail a query over the whole vault.
+A note whose frontmatter is unusable — malformed YAML, a repeated key, a top level
+that is not a mapping, or a block that is never closed — is counted in
+`unparsable` and skipped; one bad note must not fail a query over the whole vault.
 
 ```jsonc
 // "legitimate mail since Sep 2, newest file first"
@@ -282,11 +312,17 @@ note must not fail a query over the whole vault.
 ```
 
 Pass `max_results: 0` for facets only, with no document list — the probe an agent
-wants when asking "what is even in here?". Sorting is by `path` or `modified`;
-note that for imported notes `modified` is *import* time, not the note's own
-date. Sorting by a frontmatter field is not supported yet, and neither are
-negation, regex matching, or relative date bounds — all additive, and left until
-real usage asks for them.
+wants when asking "what is even in here?". Pass `fields: ["subject", "date"]` to
+get those values with each match — always a list per field, the values a filter
+would see — instead of reading every matched note. The text result leaves a
+field with no values off its line and states each field's coverage over the
+whole match set instead (`status 7/12 · stauts 0/12`, also `field_coverage` in
+the structured result), which also exposes a misspelt field; the structured
+result keeps empty fields as `[]`. Sorting is by `path` or
+`modified`; note that for imported notes `modified` is *import* time, not the
+note's own date. Sorting by a frontmatter field is not supported yet, and
+neither are general negation (only `not_exists`), regex matching, or relative
+date bounds — all additive, and left until real usage asks for them.
 
 ## Git-backed writes & history
 
@@ -387,7 +423,9 @@ The `edit_file` find/replace and `batch_edits` stay tool-only affordances.
 ## Build
 
 ```sh
-go build -o kbmcp .
+make            # ./kbmcp and bin/fmq
+make install    # fmq into $(go env GOPATH)/bin — search_frontmatter needs it on PATH
+make test
 ```
 
 ## Run
@@ -545,8 +583,9 @@ claude mcp add --transport http kb http://your-host:8070/ \
   fronting gateway (which can add OAuth) as injected headers; the server logs
   that identity but does not enforce scopes itself.
 - No built-in TLS — terminate TLS at a reverse proxy for internet exposure.
-- `search` and `find_files` shell out to `rg` and `fd` — both must be installed
-  on the host. The frontmatter tools have no such dependency.
+- `search`, `find_files` and `search_frontmatter` shell out to `rg`, `fd` and
+  `fmq` — all must be on `PATH` on the host. `read_frontmatter` has no such
+  dependency.
 - Single served folder per process.
 
 ## License

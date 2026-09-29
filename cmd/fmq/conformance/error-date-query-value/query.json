@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "x",
+      "op": "date_eq",
+      "value": "2026-1-3"
+    }
+  ]
+}

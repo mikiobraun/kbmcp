@@ -1,0 +1,11 @@
+{
+  "fields": [
+    "title",
+    "tags",
+    "x",
+    "meta",
+    "att.mime",
+    "missing",
+    "n"
+  ]
+}

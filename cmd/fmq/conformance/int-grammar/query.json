@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "id",
+      "op": "int_lte",
+      "value": "1000"
+    }
+  ]
+}

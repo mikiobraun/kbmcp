@@ -1,0 +1,10 @@
+{
+  "max_results": 0,
+  "filters": [
+    {
+      "field": "x",
+      "op": "text_eq",
+      "value": "none"
+    }
+  ]
+}

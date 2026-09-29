@@ -1,0 +1,17 @@
+{
+  "matches": [
+    {
+      "path": "comment-only.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "empty-block.md",
+      "modified": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 2,
+  "truncated": false,
+  "scanned": 10,
+  "with_frontmatter": 10,
+  "unparsable": 8
+}

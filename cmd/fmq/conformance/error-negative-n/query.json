@@ -1,0 +1,9 @@
+{
+  "facets": [
+    {
+      "field": "x",
+      "stat": "text_top",
+      "n": -1
+    }
+  ]
+}

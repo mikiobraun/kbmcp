@@ -1,0 +1,20 @@
+{
+  "matches": [],
+  "total": 5,
+  "truncated": true,
+  "scanned": 5,
+  "with_frontmatter": 5,
+  "unparsable": 0,
+  "facets": [
+    {
+      "field": "size",
+      "stat": "int_range",
+      "docs": 4,
+      "count": 4,
+      "distinct": 4,
+      "unparsed": 1,
+      "min": "7",
+      "max": "250"
+    }
+  ]
+}

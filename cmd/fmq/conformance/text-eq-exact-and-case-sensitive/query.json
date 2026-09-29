@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "subject",
+      "op": "text_eq",
+      "value": "Alpha"
+    }
+  ]
+}

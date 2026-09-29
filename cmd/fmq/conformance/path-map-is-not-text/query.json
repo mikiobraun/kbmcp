@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "auth",
+      "op": "text_contains",
+      "value": "pass"
+    }
+  ]
+}

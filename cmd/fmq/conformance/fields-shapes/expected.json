@@ -1,0 +1,76 @@
+{
+  "matches": [
+    {
+      "path": "a.md",
+      "modified": "2026-01-01T00:00:00Z",
+      "fields": {
+        "att.mime": [
+          "text/plain",
+          "application/pdf"
+        ],
+        "meta": [
+          {
+            "k": "v",
+            "n": [
+              "1",
+              "2"
+            ]
+          }
+        ],
+        "missing": [],
+        "n": [
+          "1.0"
+        ],
+        "tags": [
+          "a",
+          "b"
+        ],
+        "title": [
+          "Hello"
+        ],
+        "x": [
+          null
+        ]
+      }
+    },
+    {
+      "path": "b.md",
+      "modified": "2026-01-01T00:00:00Z",
+      "fields": {
+        "att.mime": [
+          "image/png"
+        ],
+        "meta": [],
+        "missing": [],
+        "n": [
+          "1.0"
+        ],
+        "tags": [
+          "a"
+        ],
+        "title": [
+          "Hello"
+        ],
+        "x": [
+          null,
+          null,
+          "null"
+        ]
+      }
+    }
+  ],
+  "total": 2,
+  "truncated": false,
+  "scanned": 2,
+  "with_frontmatter": 2,
+  "unparsable": 0,
+  "field_coverage": {
+    "att.mime": 2,
+    "meta": 1,
+    "missing": 0,
+    "n": 2,
+    "tags": 2,
+    "title": 2,
+    "x": 1
+  }
+}

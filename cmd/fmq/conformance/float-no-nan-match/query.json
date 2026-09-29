@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "n",
+      "op": "float_gte",
+      "value": "-1e300"
+    }
+  ]
+}

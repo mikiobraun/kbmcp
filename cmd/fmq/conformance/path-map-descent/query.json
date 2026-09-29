@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "auth.dkim",
+      "op": "text_eq",
+      "value": "pass"
+    }
+  ]
+}

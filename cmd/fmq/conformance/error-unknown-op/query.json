@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "x",
+      "op": "regex",
+      "value": "a"
+    }
+  ]
+}

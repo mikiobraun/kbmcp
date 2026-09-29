@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "attachments.mime",
+      "op": "text_contains",
+      "value": "pdf"
+    }
+  ]
+}

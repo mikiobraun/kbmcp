@@ -1,0 +1,17 @@
+{
+  "matches": [
+    {
+      "path": "quoted.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "true.md",
+      "modified": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 2,
+  "truncated": false,
+  "scanned": 7,
+  "with_frontmatter": 7,
+  "unparsable": 0
+}

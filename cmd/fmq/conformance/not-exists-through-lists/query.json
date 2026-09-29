@@ -1,0 +1,8 @@
+{
+  "filters": [
+    {
+      "field": "a.b",
+      "op": "not_exists"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "matches": [
+    {
+      "path": "date.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "minutes.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "no-zone.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "offset-crosses-midnight.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "quoted.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "rfc3339-frac.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "rfc3339.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "slash.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "space-minutes.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "space.md",
+      "modified": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 10,
+  "truncated": false,
+  "scanned": 13,
+  "with_frontmatter": 13,
+  "unparsable": 0
+}

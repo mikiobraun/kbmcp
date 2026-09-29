@@ -1,0 +1,28 @@
+{
+  "matches": [],
+  "total": 5,
+  "truncated": true,
+  "scanned": 5,
+  "with_frontmatter": 5,
+  "unparsable": 0,
+  "facets": [
+    {
+      "field": "tag",
+      "stat": "text_top",
+      "docs": 4,
+      "count": 9,
+      "distinct": 4,
+      "unparsed": 2,
+      "top": [
+        {
+          "value": "c",
+          "count": 3
+        },
+        {
+          "value": "a",
+          "count": 2
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "x",
+      "op": "text_eq",
+      "value": "none"
+    }
+  ]
+}

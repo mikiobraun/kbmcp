@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "deep.x.y",
+      "op": "text_eq",
+      "value": "hit"
+    }
+  ]
+}

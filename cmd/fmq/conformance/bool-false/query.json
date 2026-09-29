@@ -1,0 +1,9 @@
+{
+  "filters": [
+    {
+      "field": "b",
+      "op": "bool_eq",
+      "value": "false"
+    }
+  ]
+}

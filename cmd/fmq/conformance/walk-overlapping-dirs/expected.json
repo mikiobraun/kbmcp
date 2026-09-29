@@ -1,0 +1,29 @@
+{
+  "matches": [
+    {
+      "path": "a.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "mail/e.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "notes/f.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "sub/c.md",
+      "modified": "2026-01-01T00:00:00Z"
+    },
+    {
+      "path": "sub/c.md",
+      "modified": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 5,
+  "truncated": false,
+  "scanned": 5,
+  "with_frontmatter": 5,
+  "unparsable": 0
+}
