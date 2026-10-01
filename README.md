@@ -377,7 +377,8 @@ are validated (no option injection) and paths stay confined to the folder.
 
 In HTTP mode the server also exposes a small REST surface alongside the MCP
 endpoint, behind the same bearer token — enough for a plain editor front-end that
-doesn't speak MCP:
+doesn't speak MCP. `PUT`, `DELETE` and `POST /move` need the `write` scope and
+answer `403` without it (see Scopes):
 
 | Method | Path | Body | Description |
 |--------|------|------|-------------|
@@ -433,7 +434,8 @@ make test
 ### stdio (default — local, launched by the client)
 
 ```sh
-./kbmcp /path/to/folder      # defaults to the current directory
+./kbmcp /path/to/folder                        # read-only; defaults to the current directory
+./kbmcp -scopes "read write" /path/to/folder   # writes allowed
 ```
 
 The folder must be a git repository (`git init` it first); the server exits with
@@ -467,13 +469,29 @@ the sole ingress. Pass a host explicitly when the gateway lives elsewhere, e.g.
 `forward_auth` → an OAuth server) that authenticates the real user, then forwards
 to kbmcp with the shared token plus `X-Volume-User` / `X-Volume-Scopes` headers.
 The token is what makes those headers trustworthy — it proves the caller is the
-gateway and not a client that reached the port directly. kbmcp logs the injected
-identity but does not itself enforce scopes.
+gateway and not a client that reached the port directly. The gateway only
+authenticates; deciding what a scope permits is kbmcp's job (see Scopes below).
 
 **Network safety:** traffic is plain HTTP, so the bearer token and file contents
 are unencrypted on the wire. Keep the listener on loopback or a trusted network
 (home LAN, tailnet) and terminate TLS at the reverse proxy; there is no built-in
 TLS.
+
+### Scopes
+
+Reading is always allowed. Changing the vault needs the `write` scope: the tools
+`write_file`, `edit_file`, `delete_file`, `move_file` and `batch_edits`, and the
+REST `PUT`, `DELETE` and `POST /move`. Without it, a write tool returns an error
+naming the missing scope and REST answers `403`; nothing is written.
+
+Where the scopes come from depends on the transport:
+
+- **HTTP:** the gateway's `X-Volume-Scopes` header (space-separated, e.g.
+  `read write`), trusted because the bearer token proved the caller is the
+  gateway. A missing or empty header is read-only.
+- **stdio:** there is no auth, so whoever launches the server decides with
+  `-scopes`. The default is `read`; pass `-scopes "read write"` to allow writes.
+  Naming `-scopes` together with `-http` is an error.
 
 ### Configuration
 
@@ -483,6 +501,7 @@ Config resolves flags first, then the environment, then an env file:
 |------|---------|
 | `-http <addr>` | serve over HTTP instead of stdio (host defaults to loopback) |
 | `-token <token>` | bearer token; prefer `$KBMCP_TOKEN` |
+| `-scopes <list>` | stdio only: `read` (default) or `"read write"`; see Scopes |
 | `-env <path>` | env file to load at startup (default `.env`) |
 
 The env file holds simple `KEY=VALUE` lines (`#` comments, optional `export`,
@@ -543,8 +562,10 @@ connected client will not see them until it reconnects.
 Claude Code:
 
 ```sh
-claude mcp add kb -- /absolute/path/to/kbmcp /path/to/folder
+claude mcp add kb -- /absolute/path/to/kbmcp -scopes "read write" /path/to/folder
 ```
+
+Drop `-scopes "read write"` for a read-only server.
 
 Or, for Claude Desktop / any client using a config file:
 
@@ -553,17 +574,21 @@ Or, for Claude Desktop / any client using a config file:
   "mcpServers": {
     "kb": {
       "command": "/absolute/path/to/kbmcp",
-      "args": ["/path/to/folder"]
+      "args": ["-scopes", "read write", "/path/to/folder"]
     }
   }
 }
 ```
 
-For a remote (HTTP) server, point clients at the URL with the bearer header:
+For a remote (HTTP) server reached directly, without the gateway, point clients
+at the URL with the bearer header. Holding the token makes the client stand in
+for the gateway, so it also states its own scopes — leave the scopes header out
+for read-only:
 
 ```sh
 claude mcp add --transport http kb http://your-host:8070/ \
-  --header "Authorization: Bearer your-secret"
+  --header "Authorization: Bearer your-secret" \
+  --header "X-Volume-Scopes: read write"
 ```
 
 ```json
@@ -571,7 +596,10 @@ claude mcp add --transport http kb http://your-host:8070/ \
   "mcpServers": {
     "kb": {
       "url": "http://your-host:8070/",
-      "headers": { "Authorization": "Bearer your-secret" }
+      "headers": {
+        "Authorization": "Bearer your-secret",
+        "X-Volume-Scopes": "read write"
+      }
     }
   }
 }
@@ -581,7 +609,7 @@ claude mcp add --transport http kb http://your-host:8070/ \
 
 - HTTP auth is a single shared bearer token. Per-user identity comes from a
   fronting gateway (which can add OAuth) as injected headers; the server logs
-  that identity but does not enforce scopes itself.
+  that identity and enforces the `write` scope (see Scopes).
 - No built-in TLS — terminate TLS at a reverse proxy for internet exposure.
 - `search`, `find_files` and `search_frontmatter` shell out to `rg`, `fd` and
   `fmq` — all must be on `PATH` on the host. `read_frontmatter` has no such

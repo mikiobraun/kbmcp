@@ -32,7 +32,7 @@ func TestInstructionsReachTheClientVerbatim(t *testing.T) {
 
 	ctx := context.Background()
 	serverT, clientT := mcp.NewInMemoryTransports()
-	ss, err := newServer(loadInstructions(path)).Connect(ctx, serverT, nil)
+	ss, err := newServer(loadInstructions(path), fixedScopes(nil)).Connect(ctx, serverT, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestNewSessionIsToldToRefetchTools(t *testing.T) {
 
 	ctx := context.Background()
 	serverT, clientT := mcp.NewInMemoryTransports()
-	ss, err := newServer("").Connect(ctx, serverT, nil)
+	ss, err := newServer("", fixedScopes(nil)).Connect(ctx, serverT, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestRefetchAfterNudgeReturnsCurrentSchema(t *testing.T) {
 
 	ctx := context.Background()
 	serverT, clientT := mcp.NewInMemoryTransports()
-	ss, err := newServer("").Connect(ctx, serverT, nil)
+	ss, err := newServer("", fixedScopes(nil)).Connect(ctx, serverT, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

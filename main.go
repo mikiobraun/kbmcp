@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -39,6 +40,7 @@ func main() {
 	token := flag.String("token", "", "bearer token for HTTP mode (default: $KBMCP_TOKEN, or KBMCP_TOKEN in the env file)")
 	envPath := flag.String("env", ".env", "env file loaded at startup (KEY=VALUE lines); real env vars win; a missing file is ignored")
 	instrPath := flag.String("instructions", "INSTRUCTIONS.md", "markdown file describing this server to connecting clients, sent once at connect; a missing file is ignored")
+	scopeFlag := flag.String("scopes", scopeRead, "stdio only: what the client may do, \"read\" or \"read write\"; over HTTP the gateway's X-Volume-Scopes header decides")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: %s [flags] [folder]\n\n"+
 			"Serves [folder] (default: current directory) over MCP.\n"+
@@ -68,15 +70,27 @@ func main() {
 	}
 	log.Printf("kbmcp: serving %s", root)
 
-	server := newServer(loadInstructions(*instrPath))
-
 	if *httpAddr != "" {
+		// -scopes would look like it limits HTTP callers while the header
+		// actually decides, so naming it there is an error, not a no-op.
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "scopes" {
+				log.Fatalf("kbmcp: -scopes applies to stdio only; over HTTP the gateway's X-Volume-Scopes header decides")
+			}
+		})
+		server := newServer(loadInstructions(*instrPath), headerScopes)
 		if err := serveHTTP(server, *httpAddr, *token); err != nil {
 			log.Fatalf("kbmcp: %v", err)
 		}
 		return
 	}
 
+	scopes, err := parseScopeFlag(*scopeFlag)
+	if err != nil {
+		log.Fatalf("kbmcp: %v", err)
+	}
+	log.Printf("kbmcp: scopes %q", strings.Join(scopes, " "))
+	server := newServer(loadInstructions(*instrPath), fixedScopes(scopes))
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("kbmcp: %v", err)
 	}
@@ -84,8 +98,9 @@ func main() {
 
 // newServer builds the MCP server with every tool registered. Split out of
 // main so a test can drive the real wiring — in particular the tool-list
-// nudge, whose whole job happens at session setup.
-func newServer(instructions string) *mcp.Server {
+// nudge, whose whole job happens at session setup. scopesOf says where a
+// caller's scopes come from on this transport.
+func newServer(instructions string, scopesOf scopesFunc) *mcp.Server {
 	// Armed after the tools are registered; see the nudge below. A session
 	// cannot reach either trigger before then, since serving starts later, but
 	// the nil check keeps that ordering from being load-bearing.
@@ -93,7 +108,9 @@ func newServer(instructions string) *mcp.Server {
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "kbmcp", Version: "0.1.0"},
 		&mcp.ServerOptions{Instructions: instructions})
-	server.AddReceivingMiddleware(loggingMiddleware)
+	// Logging wraps the scope check, so a refused write is logged as FAILED
+	// with its reason like any other failed call.
+	server.AddReceivingMiddleware(loggingMiddleware, scopeMiddleware(scopesOf))
 
 	// Fire the nudge at whichever point this client became able to receive
 	// notifications. There are two, because go-sdk v1.7.0 added a second

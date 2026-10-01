@@ -51,7 +51,8 @@ registered with `mcp.AddTool` in `main.go` (the tool *description* an agent sees
 lives there, next to the registration; per-field docs are `jsonschema:` tags on the
 input struct). Each handler returns **both** a human-readable text result
 (`textResult`) and a typed struct — keep both in sync. Adding a tool = new file
-+ registration in `main.go`.
++ registration in `main.go`; a tool that writes also goes into `writeTools`
+(`scopes.go`), and a REST write route is wrapped in `requireWrite`.
 
 **Git-backed writes.** `git.go` is the only place that runs git: `runGit` for
 read-only commands, `gitCommit` for pathspec-limited commits guarded by `gitMu`.
@@ -90,7 +91,11 @@ hands it to `serveHTTP` (`http.go`), which mounts MCP at `/` and REST
 middleware. In HTTP mode kbmcp is meant to sit behind an auth gateway (Caddy
 `forward_auth` → volume-auth); the shared token proves the caller *is* the
 gateway, which is what makes the injected `X-Volume-User` / `X-Volume-Scopes`
-headers trustworthy (logged, not enforced). `rest.go` supports `If-Match` /
+headers trustworthy. volume-auth is generic: it authenticates and forwards
+identity and scopes, but decides nothing about kbmcp — what a scope permits is
+kbmcp's to enforce, in `scopes.go`: reads are always allowed, writes need
+`write`. Over HTTP the header decides (missing = read-only); in stdio the
+`-scopes` flag does (default `read`). `rest.go` supports `If-Match` /
 `If-None-Match` ETag optimistic locking.
 
 **Logging** is a receiving middleware (`log.go`) that logs every request with a

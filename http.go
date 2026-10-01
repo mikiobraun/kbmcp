@@ -16,7 +16,8 @@ import (
 // given) and always requires a shared bearer token ("Authorization: Bearer
 // <token>"): the gateway (Caddy) is the only ingress and injects that token,
 // which proves the caller is the gateway — so the X-Volume-User /
-// X-Volume-Scopes headers it also injects can be trusted. A same-host gateway
+// X-Volume-Scopes headers it also injects can be trusted, and are enforced
+// (scopes.go). A same-host gateway
 // reaches loopback; a gateway on another host (e.g. a VM over Tailscale) needs a
 // routable bind like the Tailscale IP — pass it as -http 100.x.y.z:8070. For an
 // unauthenticated local server, use stdio instead.
@@ -29,6 +30,20 @@ func serveHTTP(server *mcp.Server, addr, token string) error {
 		return fmt.Errorf("HTTP mode requires a bearer token: set $KBMCP_TOKEN or pass -token (use stdio for an unauthenticated local server)")
 	}
 
+	// Default to loopback when only a port was given; the gateway is the sole
+	// ingress and the token proves the caller is the gateway. Bind a routable
+	// address (e.g. the Tailscale IP) only when the gateway is on another host.
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	bind := net.JoinHostPort(host, port)
+	log.Printf("kbmcp: listening on %s (bearer-token auth, behind gateway)", bind)
+	return http.ListenAndServe(bind, httpHandler(server, token))
+}
+
+// httpHandler is everything serveHTTP serves, split out so a test can drive
+// the real routes and middleware without binding a port.
+func httpHandler(server *mcp.Server, token string) http.Handler {
 	mcpHandler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },
 		// Behind a reverse proxy the connection is loopback but the Host header
@@ -40,23 +55,15 @@ func serveHTTP(server *mcp.Server, addr, token string) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", mcpHandler)
 	mux.HandleFunc("GET /files/", restGet)
-	mux.HandleFunc("PUT /files/", restPut)
-	mux.HandleFunc("DELETE /files/", restDelete)
-	mux.HandleFunc("POST /move", restMove)
+	mux.HandleFunc("PUT /files/", requireWrite(restPut))
+	mux.HandleFunc("DELETE /files/", requireWrite(restDelete))
+	mux.HandleFunc("POST /move", requireWrite(restMove))
 	mux.HandleFunc("GET /history", restHistory)
 	mux.HandleFunc("GET /search", restSearch)
 	mux.HandleFunc("GET /find", restFind)
 	mux.HandleFunc("GET /links", restLinks)
 
-	// Default to loopback when only a port was given; the gateway is the sole
-	// ingress and the token proves the caller is the gateway. Bind a routable
-	// address (e.g. the Tailscale IP) only when the gateway is on another host.
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	bind := net.JoinHostPort(host, port)
-	log.Printf("kbmcp: listening on %s (bearer-token auth, behind gateway)", bind)
-	return http.ListenAndServe(bind, requireToken(token, logIdentity(mux)))
+	return requireToken(token, logIdentity(mux))
 }
 
 // logIdentity logs the caller identity injected by the auth gateway, when present.
