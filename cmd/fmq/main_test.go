@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"kbmcp/fmq"
+	"github.com/mikiobraun/kbmcp/fmq"
 )
 
 // vault writes files into a temporary directory and makes it the working

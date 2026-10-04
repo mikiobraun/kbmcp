@@ -19,7 +19,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"kbmcp/fmq"
+	"github.com/mikiobraun/kbmcp/fmq"
 )
 
 // fmqCommand is the fmq binary, looked up on PATH. Tests point it at a fresh

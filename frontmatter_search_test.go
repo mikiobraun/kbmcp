@@ -10,7 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"kbmcp/fmq"
+	"github.com/mikiobraun/kbmcp/fmq"
 )
 
 // TestMain builds fmq from this tree, so search_frontmatter is tested against

@@ -1,4 +1,4 @@
-module kbmcp
+module github.com/mikiobraun/kbmcp
 
 go 1.26.3
 

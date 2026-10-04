@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"strings"
 
-	"kbmcp/fmq"
+	"github.com/mikiobraun/kbmcp/fmq"
 )
 
 const usage = `usage: fmq [options] [filters] [dir...]
