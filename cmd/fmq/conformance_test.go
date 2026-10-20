@@ -32,6 +32,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -67,6 +68,28 @@ func TestConformance(t *testing.T) {
 	for _, q := range cases {
 		dir := filepath.Dir(q)
 		t.Run(filepath.Base(dir), func(t *testing.T) { runCase(t, bin, dir) })
+	}
+}
+
+// Fixture names must differ by more than case: Go module zips refuse paths
+// that collide case-insensitively (pkg.go.dev rejected the module for it), and
+// a clone onto macOS or Windows would silently lose files. Naming a fixture
+// after the value it holds (true.md, True.md) is the easy way to trip this.
+func TestConformanceNoCaseCollisions(t *testing.T) {
+	seen := map[string]string{}
+	err := filepath.WalkDir("conformance", func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		key := strings.ToLower(p)
+		if other, dup := seen[key]; dup {
+			t.Errorf("%s and %s differ only in case", other, p)
+		}
+		seen[key] = p
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
