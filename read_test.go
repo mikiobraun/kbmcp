@@ -8,6 +8,71 @@ import (
 	"testing"
 )
 
+func off() *bool { f := false; return &f }
+
+// The text result is numbered, cat -n style; the typed content stays the raw
+// file, so it can be written back as is.
+func TestReadFileNumbersTextNotContent(t *testing.T) {
+	ctx := searchVault(t, map[string]string{"a.md": "alpha\nbeta\n"})
+	res, out, err := ReadFile(ctx, nil, ReadFileInput{Paths: []string{"a.md"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "a.md\n     1\talpha\n     2\tbeta\n\n"; resultText(res) != want {
+		t.Errorf("text = %q, want %q", resultText(res), want)
+	}
+	if out.Entries[0].Content != "alpha\nbeta\n" {
+		t.Errorf("content = %q", out.Entries[0].Content)
+	}
+}
+
+func TestReadFileWithoutLineNumbers(t *testing.T) {
+	ctx := searchVault(t, map[string]string{"a.md": "alpha\nbeta"})
+	res, _, err := ReadFile(ctx, nil, ReadFileInput{Paths: []string{"a.md"}, ShowLineNumbers: off()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "a.md\nalpha\nbeta\n\n"; resultText(res) != want {
+		t.Errorf("text = %q, want %q", resultText(res), want)
+	}
+}
+
+// read_lines numbers from where the range starts, and its content is the raw
+// lines, like read_file's.
+func TestReadLinesNumbersFromStart(t *testing.T) {
+	ctx := searchVault(t, map[string]string{"a.md": "one\ntwo\nthree\nfour\n"})
+	res, out, err := ReadLines(ctx, nil, ReadLinesInput{Path: "a.md", Start: 2, End: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "     2\ttwo\n     3\tthree\n"; resultText(res) != want {
+		t.Errorf("text = %q, want %q", resultText(res), want)
+	}
+	if out.Content != "two\nthree\n" {
+		t.Errorf("content = %q", out.Content)
+	}
+	res, _, err = ReadLines(ctx, nil, ReadLinesInput{Path: "a.md", Start: 2, End: 3, ShowLineNumbers: off()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resultText(res) != "two\nthree\n" {
+		t.Errorf("unnumbered text = %q", resultText(res))
+	}
+}
+
+// An empty range says so in the text, but the content is empty: the message
+// is not part of the file.
+func TestReadLinesEmptyRange(t *testing.T) {
+	ctx := searchVault(t, map[string]string{"a.md": "one\n"})
+	res, out, err := ReadLines(ctx, nil, ReadLinesInput{Path: "a.md", Start: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Content != "" || !strings.Contains(resultText(res), "file has 1 lines") {
+		t.Errorf("content = %q, text = %q", out.Content, resultText(res))
+	}
+}
+
 func readFiles(t *testing.T, ctx context.Context, in ReadFileInput) ReadFileOutput {
 	t.Helper()
 	_, out, err := ReadFile(ctx, nil, in)

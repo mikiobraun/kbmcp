@@ -180,10 +180,35 @@ func ListFiles(ctx context.Context, req *mcp.CallToolRequest, in ListInput) (*mc
 
 // ---- read_lines ----
 
+// showLineNumbers reads the read tools' show_line_numbers flag. It is a pointer
+// because the default is on: a plain bool could not tell "left out" from false.
+func showLineNumbers(flag *bool) bool {
+	return flag == nil || *flag
+}
+
+// numberLines renders content the way cat -n does — the line number
+// right-aligned in six columns, a tab, then the line — starting at first. The
+// numbers go only into the text result an agent reads: they let it cite a line
+// and line its reading up with read_outline's ranges and read_lines. The typed
+// content stays the raw file, so a program can write it back or hash it, and
+// the write tools' descriptions tell an agent the prefix is not part of the
+// file.
+func numberLines(content string, first int) string {
+	if content == "" {
+		return ""
+	}
+	var b strings.Builder
+	for i, line := range strings.Split(strings.TrimSuffix(content, "\n"), "\n") {
+		fmt.Fprintf(&b, "%6d\t%s\n", first+i, line)
+	}
+	return b.String()
+}
+
 type ReadLinesInput struct {
-	Path  string `json:"path" jsonschema:"file to read, relative to root"`
-	Start int    `json:"start,omitempty" jsonschema:"first line to read, 1-based inclusive (default 1)"`
-	End   int    `json:"end,omitempty" jsonschema:"last line to read, 1-based inclusive; 0 or less means to end of file"`
+	Path            string `json:"path" jsonschema:"file to read, relative to root"`
+	Start           int    `json:"start,omitempty" jsonschema:"first line to read, 1-based inclusive (default 1)"`
+	End             int    `json:"end,omitempty" jsonschema:"last line to read, 1-based inclusive; 0 or less means to end of file"`
+	ShowLineNumbers *bool  `json:"show_line_numbers,omitempty" jsonschema:"prefix each line of the text result with its line number and a tab (default true); the structured content is always the raw lines"`
 }
 
 type ReadLinesOutput struct {
@@ -229,7 +254,8 @@ func ReadLines(ctx context.Context, req *mcp.CallToolRequest, in ReadLinesInput)
 		if in.End > 0 && lineNo > in.End {
 			break
 		}
-		fmt.Fprintf(&b, "%d\t%s\n", lineNo, sc.Text())
+		b.WriteString(sc.Text())
+		b.WriteByte('\n')
 		lastEmitted = lineNo
 	}
 	if err := sc.Err(); err != nil {
@@ -237,14 +263,18 @@ func ReadLines(ctx context.Context, req *mcp.CallToolRequest, in ReadLinesInput)
 	}
 
 	content := b.String()
-	if content == "" {
-		content = fmt.Sprintf("(no lines in range; file has %d lines)\n", lineNo)
+	text := content
+	switch {
+	case content == "":
+		text = fmt.Sprintf("(no lines in range; file has %d lines)\n", lineNo)
+	case showLineNumbers(in.ShowLineNumbers):
+		text = numberLines(content, in.Start)
 	}
 	end := in.End
 	if end <= 0 || end > lastEmitted {
 		end = lastEmitted
 	}
-	return textResult("%s", content), ReadLinesOutput{Path: relPath(path), Start: in.Start, End: end, Content: content}, nil
+	return textResult("%s", text), ReadLinesOutput{Path: relPath(path), Start: in.Start, End: end, Content: content}, nil
 }
 
 // ---- read_file ----
@@ -255,8 +285,9 @@ func ReadLines(ctx context.Context, req *mcp.CallToolRequest, in ReadLinesInput)
 const maxReadPaths = maxListMax
 
 type ReadFileInput struct {
-	Paths []string `json:"paths" jsonschema:"files to read in full, relative to root; the output has one entry per path, in this order"`
-	Cap   int      `json:"cap,omitempty" jsonschema:"maximum bytes returned per file (default and maximum 1 MiB); a longer file comes back with truncated=true"`
+	Paths           []string `json:"paths" jsonschema:"files to read in full, relative to root; the output has one entry per path, in this order"`
+	Cap             int      `json:"cap,omitempty" jsonschema:"maximum bytes returned per file (default and maximum 1 MiB); a longer file comes back with truncated=true"`
+	ShowLineNumbers *bool    `json:"show_line_numbers,omitempty" jsonschema:"prefix each line of the text result with its line number and a tab (default true); the structured content is always the raw file"`
 }
 
 type FileEntry struct {
@@ -374,6 +405,11 @@ func ReadFile(ctx context.Context, req *mcp.CallToolRequest, in ReadFileInput) (
 		switch {
 		case e.Error != "":
 			fmt.Fprintf(&b, "(%s)\n", e.Error)
+		case showLineNumbers(in.ShowLineNumbers):
+			b.WriteString(numberLines(e.Content, 1))
+			if e.Truncated {
+				fmt.Fprintf(&b, "... (truncated at %d bytes)\n", len(e.Content))
+			}
 		default:
 			b.WriteString(e.Content)
 			if !strings.HasSuffix(e.Content, "\n") {

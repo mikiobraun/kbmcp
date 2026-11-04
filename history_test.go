@@ -104,12 +104,15 @@ func TestDiffAndFileAt(t *testing.T) {
 	}
 
 	// file_at HEAD~1 should give the old content.
-	_, f, err := FileAt(ctx, nil, FileAtInput{Path: "a.md", Ref: "HEAD~1"})
+	res, f, err := FileAt(ctx, nil, FileAtInput{Path: "a.md", Ref: "HEAD~1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if f.Content != "one\n" {
 		t.Fatalf("file_at = %q", f.Content)
+	}
+	if text := resultText(res); text != "     1\tone\n" {
+		t.Fatalf("file_at text = %q", text)
 	}
 }
 

@@ -166,7 +166,7 @@ func newServer(instructions string, scopesOf scopesFunc) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "read_lines",
-		Description: "Read a specific line range from a text file (1-based, inclusive). Output is line-numbered.",
+		Description: "Read a specific line range from a text file (1-based, inclusive). Each line of the text result is prefixed with its line number and a tab, like cat -n; pass show_line_numbers=false to turn that off. The prefix is not part of the file.",
 	}, ReadLines)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -181,17 +181,17 @@ func newServer(instructions string, scopesOf scopesFunc) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "read_file",
-		Description: "Read whole text files from the served folder. Pass 'paths' (one or many) — the result has one entry per path, in the same order, so a set of search or list results can be pulled in a single call. 'cap' bounds the bytes per file; a call returns at most 1 MiB in total, and anything cut short is flagged with truncated. Use read_lines for a range within one file, or read_frontmatter for just the YAML header.",
+		Description: "Read whole text files from the served folder. Pass 'paths' (one or many) — the result has one entry per path, in the same order, so a set of search or list results can be pulled in a single call. 'cap' bounds the bytes per file; a call returns at most 1 MiB in total, and anything cut short is flagged with truncated. Each line of the text result is prefixed with its line number and a tab, like cat -n; pass show_line_numbers=false to turn that off. The prefix is not part of the file. Use read_lines for a range within one file, or read_frontmatter for just the YAML header.",
 	}, ReadFile)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "write_file",
-		Description: "Create or overwrite a text file with the given content, then commit it. A commit 'message' is required. Parent folders are created as needed. Pass dry_run to preview the diff without writing or committing.",
+		Description: "Create or overwrite a text file with the given content, then commit it. A commit 'message' is required. Parent folders are created as needed. The content is the file's text only: leave out the line-number prefix (number, then a tab) that read_file, read_lines and file_at put in front of each line. Pass dry_run to preview the diff without writing or committing.",
 	}, WriteFile)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "edit_file",
-		Description: "Replace an exact string in a text file, then commit it. old_string must occur exactly once unless replace_all is set. A commit 'message' is required. Pass dry_run to preview the diff without writing or committing.",
+		Description: "Replace an exact string in a text file, then commit it. old_string must occur exactly once unless replace_all is set. old_string and new_string are the file's text only: leave out the line-number prefix (number, then a tab) that read_file, read_lines and file_at put in front of each line. A commit 'message' is required. Pass dry_run to preview the diff without writing or committing.",
 	}, EditFile)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -206,7 +206,7 @@ func newServer(instructions string, scopesOf scopesFunc) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "batch_edits",
-		Description: "Apply an ordered mix of write (new/overwritten files), edit (string replacements), delete (file removal, same rules as delete_file), and move (same rules as move_file, including link rewrites) operations across one or more files and commit them together as a single commit. All ops are validated first; if any is invalid, nothing is written. A commit 'message' is required. Pass dry_run to preview all diffs without writing or committing.",
+		Description: "Apply an ordered mix of write (new/overwritten files), edit (string replacements), delete (file removal, same rules as delete_file), and move (same rules as move_file, including link rewrites) operations across one or more files and commit them together as a single commit. All ops are validated first; if any is invalid, nothing is written. Content, old_string and new_string are the file's text only: leave out the line-number prefix (number, then a tab) that read_file, read_lines and file_at put in front of each line. A commit 'message' is required. Pass dry_run to preview all diffs without writing or committing.",
 	}, BatchEdits)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -221,7 +221,7 @@ func newServer(instructions string, scopesOf scopesFunc) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "file_at",
-		Description: "Read the contents of a file as it was at a given commit ref (e.g. a hash from history, or HEAD~1).",
+		Description: "Read the contents of a file as it was at a given commit ref (e.g. a hash from history, or HEAD~1). Each line of the text result is prefixed with its line number and a tab, like cat -n; pass show_line_numbers=false to turn that off. The prefix is not part of the file.",
 	}, FileAt)
 
 	mcp.AddTool(server, &mcp.Tool{
