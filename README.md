@@ -18,8 +18,8 @@ in it so commits succeed.
 | `search` | exactly one of `regex` / `substring`, plus `path` (scope), `glob`, `case_sensitive`, `max_results` (default 100) | Full-text content search via ripgrep. `regex` treats metacharacters as special, `substring` does not; smart-case unless `case_sensitive`; `glob` restricts by filename. Returns `file:line: text`. |
 | `find_files` | at most one of `regex` / `glob`, plus `type` (`file`\|`dir`), `path` (scope), `max_results` (default 200), `from` — all optional | Find files/directories by name via fd. `regex` matches the filename as a regular expression, `glob` as a shell pattern; neither lists everything under the scope. Returns a sorted, paginated path list. |
 | `search_frontmatter` | `filters`, `facets`, `fields`, `path` (scope), `sort` (`path`\|`modified`), `sort_reverse`, `max_results` — all optional | Find notes by their YAML frontmatter values, and summarise those values with facets. Each operator names the type it reads; facets are computed over the whole match set. |
-| `read_lines` | `path`, `start` (default 1), `end` (default EOF) | Read a 1-based inclusive line range, line-numbered. |
-| `read_file` | `paths` (one or many), `cap` (bytes per file, optional) | Read whole text files — one entry per path, in order, so a set of search results can be pulled in a single call. A call returns at most 1 MiB in total. |
+| `read_lines` | `path`, `start` (default 1), `end` (default EOF), `show_line_numbers` (default true) | Read a 1-based inclusive line range, line-numbered. |
+| `read_file` | `paths` (one or many), `cap` (bytes per file, optional), `show_line_numbers` (default true) | Read whole text files, line-numbered — one entry per path, in order, so a set of search results can be pulled in a single call. A call returns at most 1 MiB in total. |
 | `read_frontmatter` | `paths`, `cap` (bytes per file, default 2000) | Return the raw, unparsed YAML frontmatter block of each note — one entry per path, in order. |
 | `read_outline` | `paths` | List each note's `#`, `##` and `###` headings with the line range of each section — one entry per path, in order. The ranges go straight into `read_lines`. |
 | `write_file` | `path`, `content`, `message`, `author_email`, `author_name` (optional), `dry_run` (optional) | Create or overwrite a file, then commit it. Parent folders are created. Returns a diff. |
@@ -29,7 +29,7 @@ in it so commits succeed.
 | `batch_edits` | `message`, `ops` (each `{op: "write"\|"edit"\|"delete"\|"move", …}`), `author_email`, `author_name` (optional), `dry_run` (optional) | Apply an ordered mix of writes, edits, deletions, and moves atomically and commit them as a **single** commit. |
 | `history` | `path` (optional), `max` (optional, default 20), `since` (optional ref) | Compact commit log: short hash, relative time, author, subject. `--follow`s renames for a single file. |
 | `diff` | `from` (default `HEAD~1`), `to` (default `HEAD`), `path` (optional), `stat` (optional) | Unified diff between two commits; `stat: true` gives a per-file insertion/deletion summary. |
-| `file_at` | `path`, `ref` | Read a file's contents as of a given commit ref. |
+| `file_at` | `path`, `ref`, `show_line_numbers` (default true) | Read a file's contents as of a given commit ref, line-numbered. |
 | `backlinks` | `path` | Notes that link to this note via `[[wiki links]]`, with the source line of each. |
 | `outgoing_links` | `path` | The `[[wiki links]]` in this note, showing which resolve and which are broken. |
 | `orphans` | — | Notes that nothing else links to (no backlinks). |
@@ -39,6 +39,12 @@ All paths are relative to the served folder. Requests that escape the folder
 and dot-directories such as `.git` — are excluded from every listing, search,
 and the link graph, and pagination cursors (`from`/`next_from`) let an agent page
 a large vault without pulling the whole tree at once.
+
+The read tools number lines the way `cat -n` does — the number right-aligned in
+six columns, a tab, then the line — so an agent can cite a line and match it to
+`read_outline`'s ranges. The numbers are only in the text result: the
+structured `content` is always the raw file, so it can be written back or hashed
+as is. `show_line_numbers: false` turns the numbering off.
 
 ### Wiki-link resolution
 

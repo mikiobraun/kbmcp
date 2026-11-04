@@ -180,8 +180,9 @@ func Diff(ctx context.Context, req *mcp.CallToolRequest, in DiffInput) (*mcp.Cal
 // ---- file_at ----
 
 type FileAtInput struct {
-	Path string `json:"path" jsonschema:"file to read, relative to root"`
-	Ref  string `json:"ref" jsonschema:"commit ref to read the file at, e.g. a hash from history or HEAD~1"`
+	Path            string `json:"path" jsonschema:"file to read, relative to root"`
+	Ref             string `json:"ref" jsonschema:"commit ref to read the file at, e.g. a hash from history or HEAD~1"`
+	ShowLineNumbers *bool  `json:"show_line_numbers,omitempty" jsonschema:"prefix each line of the text result with its line number and a tab (default true); the structured content is always the raw file"`
 }
 
 type FileAtOutput struct {
@@ -220,6 +221,9 @@ func FileAt(ctx context.Context, req *mcp.CallToolRequest, in FileAtInput) (*mcp
 
 	res := FileAtOutput{Path: rel, Ref: in.Ref, Content: string(data), Bytes: len(data), Truncated: truncated}
 	text := res.Content
+	if showLineNumbers(in.ShowLineNumbers) {
+		text = numberLines(res.Content, 1)
+	}
 	if truncated {
 		text += fmt.Sprintf("\n... (truncated at %d bytes)\n", maxFileBytes)
 	}
